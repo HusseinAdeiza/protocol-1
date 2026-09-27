@@ -1,0 +1,13 @@
+{
+  "name": "backlit-protocol",
+  "private": true,
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:circuits": "circuits/scripts/build.sh",
+    "build": "pnpm --filter @backlit/sdk build",
+    "test": "pnpm --filter @backlit/sdk test"
+  }
+}

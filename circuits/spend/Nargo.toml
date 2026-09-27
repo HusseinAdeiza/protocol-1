@@ -1,0 +1,7 @@
+[package]
+name = "spend"
+type = "bin"
+authors = ["Backlit"]
+
+[dependencies]
+backlit = { path = "../lib" }

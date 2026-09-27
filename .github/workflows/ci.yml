@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NARGO_VERSION: 1.0.0-beta.22
+  BB_VERSION: 5.0.0-nightly.20260522
+
+jobs:
+  circuits:
+    name: Circuits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install nargo
+        run: |
+          curl -L https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+          echo "$HOME/.nargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.nargo/bin/noirup" --version "$NARGO_VERSION"
+
+      - name: Test
+        working-directory: circuits
+        run: nargo test
+
+      - name: Gate counts
+        working-directory: circuits
+        run: nargo compile && nargo info
+
+  contracts:
+    name: Contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Test
+        working-directory: contracts
+        run: forge test -vv
+
+      - name: Sizes
+        working-directory: contracts
+        run: forge build --sizes
+
+      - name: Gas snapshot
+        working-directory: contracts
+        run: forge snapshot --check || forge snapshot
+
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @backlit/sdk build
+      - run: pnpm --filter @backlit/sdk test

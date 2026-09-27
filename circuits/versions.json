@@ -1,0 +1,6 @@
+{
+  "nargo": "1.0.0-beta.22",
+  "bb": "5.0.0-nightly.20260522",
+  "verifierTarget": "evm",
+  "scheme": "ultra_honk"
+}

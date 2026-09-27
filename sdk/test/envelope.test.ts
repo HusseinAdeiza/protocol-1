@@ -1,15 +1,20 @@
 import {describe, expect, it} from "vitest";
 
 import {
+  bytesToHex,
+  hexToBytes,
   keysFromSeed,
+  noteCommitment,
   offerBlinding,
   openNote,
   openOffer,
   openOwnOffer,
+  priceCommitment,
   randomFieldElement,
   sealNote,
-  sealOffer,
   sealOfferFrom,
+  toHex32,
+  verifyNote,
   FR,
   type Hex,
 } from "../src/index.js";
@@ -47,6 +52,12 @@ describe("note payloads", () => {
     expect(openNote(alice.viewingSk, tampered)).toBeNull();
   });
 
+  it("returns null for a low-order ephemeral key instead of throwing", () => {
+    const payload = hexToBytes(sealNote(alice.viewingPk, {asset: WETH, amount: 5n, salt: 6n}));
+    payload.fill(0, 1, 33);
+    expect(openNote(alice.viewingSk, bytesToHex(payload))).toBeNull();
+  });
+
   it("skips foreign payloads cheaply", () => {
     // The view tag is four bytes, so roughly one in 4.3 billion foreign
     // payloads costs a full decryption attempt. None of these should even
@@ -60,41 +71,99 @@ describe("note payloads", () => {
   });
 });
 
+describe("checking a note against its leaf", () => {
+  const note = {asset: WETH, amount: 1_000n, ownerPk: alice.ownerPk, salt: 77n};
+  const leaf = noteCommitment(note);
+
+  it("accepts the note the leaf commits to", () => {
+    expect(verifyNote(note, leaf, WETH)).toBe(true);
+    expect(verifyNote(note, toHex32(leaf), WETH.toLowerCase() as Hex)).toBe(true);
+  });
+
+  it("drops a payload that lies about the amount or the salt", () => {
+    expect(verifyNote({...note, amount: 2_000n}, leaf, WETH)).toBe(false);
+    expect(verifyNote({...note, salt: 78n}, leaf, WETH)).toBe(false);
+  });
+
+  it("drops a note in another asset", () => {
+    expect(verifyNote(note, leaf, "0x0000000000000000000000000000000000000001")).toBe(false);
+  });
+});
+
 describe("offer payloads", () => {
-  it("round trips to the seller", () => {
-    const offer = {price: 400_000_000_000_000_000n, blinding: randomFieldElement()};
-    const opened = openOffer(alice.viewingSk, sealOffer(alice.viewingPk, offer));
-    expect(opened).toEqual(offer);
+  const listingId = 0x5eedn;
+  const price = 250_000_000_000_000_000n;
+
+  it("gives the seller an opening of the on-chain commitment", () => {
+    const sealed = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price);
+    expect(sealed.priceCommitment).toBe(priceCommitment(price, sealed.blinding));
+    expect(openOffer(alice.viewingSk, sealed.payload, sealed.priceCommitment)).toEqual({
+      price,
+      blinding: sealed.blinding,
+    });
+    expect(openOffer(alice.viewingSk, sealed.payload, toHex32(sealed.priceCommitment))?.price).toBe(price);
   });
 
-  it("lets the buyer reopen their own offer without stored state", () => {
-    const listingId = 0x5eedn;
-    const blinding = offerBlinding(bob.spendingKey, listingId, 0);
-    const price = 250_000_000_000_000_000n;
-    const payload = sealOfferFrom(bob.spendingKey, listingId, 0, alice.viewingPk, {price, blinding});
-
-    expect(openOffer(alice.viewingSk, payload)).toEqual({price, blinding});
-
-    const reopened = openOwnOffer(bob.spendingKey, listingId, alice.viewingPk, payload);
-    expect(reopened?.offer.price).toBe(price);
-    expect(reopened?.offer.blinding).toBe(blinding);
-    expect(reopened?.nonce).toBe(0);
+  it("lets the buyer reopen their own offer without stored state or a search", () => {
+    const sealed = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price);
+    expect(openOwnOffer(bob.spendingKey, listingId, alice.viewingPk, sealed.payload, sealed.priceCommitment)).toEqual({
+      price,
+      blinding: sealed.blinding,
+    });
   });
 
-  it("finds the right nonce when a buyer has bid before", () => {
-    const listingId = 0x5eedn;
-    const blinding = offerBlinding(bob.spendingKey, listingId, 3);
-    const payload = sealOfferFrom(bob.spendingKey, listingId, 3, alice.viewingPk, {price: 9n, blinding});
-    expect(openOwnOffer(bob.spendingKey, listingId, alice.viewingPk, payload)?.nonce).toBe(3);
+  it("rejects an opening that does not match the commitment on chain", () => {
+    const sealed = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price);
+    const other = priceCommitment(price + 1n, sealed.blinding);
+    expect(openOffer(alice.viewingSk, sealed.payload, other)).toBeNull();
+    expect(openOwnOffer(bob.spendingKey, listingId, alice.viewingPk, sealed.payload, other)).toBeNull();
   });
 
-  it("gives a different blinding per listing", () => {
-    expect(offerBlinding(bob.spendingKey, 1n, 0)).not.toBe(offerBlinding(bob.spendingKey, 2n, 0));
-    expect(offerBlinding(bob.spendingKey, 1n, 0)).toBeLessThan(FR);
+  it("uses a fresh nonce per offer, so two offers never share a key or a blinding", () => {
+    const first = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price);
+    const second = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price);
+    expect(second.blinding).not.toBe(first.blinding);
+    expect(second.payload.slice(4, 68)).not.toBe(first.payload.slice(4, 68));
+    expect(openOwnOffer(bob.spendingKey, listingId, alice.viewingPk, second.payload, second.priceCommitment)?.blinding).toBe(
+      second.blinding,
+    );
   });
 
-  it("stays closed to a third party", () => {
-    const payload = sealOffer(alice.viewingPk, {price: 1n, blinding: 2n});
-    expect(openOffer(bob.viewingSk, payload)).toBeNull();
+  it("derives the blinding from the nonce in the payload", () => {
+    const r = new Uint8Array(16).fill(9);
+    const sealed = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price, r);
+    expect(sealed.blinding).toBe(offerBlinding(bob.spendingKey, listingId, r));
+    expect(offerBlinding(bob.spendingKey, listingId + 1n, r)).not.toBe(sealed.blinding);
+    expect(sealed.blinding).toBeLessThan(FR);
+  });
+
+  it("rejects an edited nonce", () => {
+    const sealed = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price);
+    const bytes = hexToBytes(sealed.payload);
+    bytes[40] = bytes[40]! ^ 1;
+    expect(openOffer(alice.viewingSk, bytesToHex(bytes), sealed.priceCommitment)).toBeNull();
+  });
+
+  it("does not open for another buyer or a third party", () => {
+    const sealed = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price);
+    expect(openOffer(bob.viewingSk, sealed.payload, sealed.priceCommitment)).toBeNull();
+    expect(openOwnOffer(alice.spendingKey, listingId, alice.viewingPk, sealed.payload, sealed.priceCommitment)).toBeNull();
+  });
+
+  it("returns null for low-order keys instead of throwing", () => {
+    const sealed = sealOfferFrom(bob.spendingKey, listingId, alice.viewingPk, price);
+    const bytes = hexToBytes(sealed.payload);
+    bytes.fill(0, 1, 33);
+    expect(openOffer(alice.viewingSk, bytesToHex(bytes), sealed.priceCommitment)).toBeNull();
+
+    const lowOrder = new Uint8Array(32);
+    lowOrder[0] = 1;
+    expect(openOwnOffer(bob.spendingKey, listingId, lowOrder, sealed.payload, sealed.priceCommitment)).toBeNull();
+  });
+});
+
+describe("salts and blindings", () => {
+  it("stay inside the field", () => {
+    for (let i = 0; i < 16; i++) expect(randomFieldElement()).toBeLessThan(FR);
   });
 });

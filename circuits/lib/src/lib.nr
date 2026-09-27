@@ -17,6 +17,10 @@ pub global MAX_AMOUNT: u128 = 79228162514264337593543950336;
 /// Basis points denominator, matching ERC-2981.
 pub global BPS_DENOM: u128 = 10000;
 
+/// "backlit/seller-salt" as a big-endian field element. Domain-separates the
+/// seller's note salt from every other use of the price blinding.
+pub global SELLER_SALT_TAG: Field = 0x6261636b6c69742f73656c6c65722d73616c74;
+
 /// A LeanIMT membership path. `depth` is the number of levels actually walked;
 /// siblings past that point are ignored, which is how a LeanIMT proof shrinks
 /// for a tree that is not yet full.
@@ -82,8 +86,10 @@ pub fn spend_note(
 }
 
 /// Keeps a public input that carries no constraint of its own inside the
-/// proof, so a proof cannot be replayed against a different pool, recipient or
-/// listing. The hash cannot be optimised away because its output is asserted.
+/// proof, so a proof cannot be replayed with a different value in that slot.
+/// The contracts fill the slot with a hash of the call's context (offer,
+/// recipient, payloads), which is what ties a proof to one call. The hash
+/// cannot be optimised away because its output is asserted.
 pub fn bind(a: Field, b: Field) {
     assert(hash_2([a, b]) != 0);
 }
@@ -94,6 +100,13 @@ pub fn hash2(a: Field, b: Field) -> Field {
     hash_2([a, b])
 }
 
+/// The seller's note salt. Derived from the price blinding, which the seller
+/// already holds from the offer, so the seller can rebuild their note even
+/// if the buyer attaches a payload that does not decrypt.
+pub fn seller_salt(price_blinding: Field) -> Field {
+    hash_2([price_blinding, SELLER_SALT_TAG])
+}
+
 /// The public stand-in for a price: binding, and hiding as long as the
 /// blinding factor stays secret.
 pub fn commit_price(price: u128, blinding: Field) -> Field {
@@ -102,7 +115,8 @@ pub fn commit_price(price: u128, blinding: Field) -> Field {
 
 mod tests {
     use super::{
-        commit, commit_price, lean_imt_root, MerkleProof, MAX_DEPTH, nullify, owner_pk,
+        commit, commit_price, lean_imt_root, MerkleProof, MAX_DEPTH, nullify, owner_pk, seller_salt,
+        SELLER_SALT_TAG,
     };
     use poseidon::poseidon::bn254::{hash_2, hash_4};
 
@@ -128,6 +142,16 @@ mod tests {
     #[test]
     fn price_commitment_is_poseidon2_of_price_and_blinding() {
         assert(commit_price(400, 12345) == hash_2([400, 12345]));
+    }
+
+    #[test]
+    fn seller_salt_is_poseidon2_of_the_blinding_and_the_tag() {
+        assert(seller_salt(12345) == hash_2([12345, SELLER_SALT_TAG]));
+        assert(seller_salt(12345) != seller_salt(12346));
+        // The same value the SDK's `sellerSalt` gives, from tests/vectors.
+        assert(
+            seller_salt(1234567) == 0x145592ed207a5399f40df8837e3ebdeaa88502a004040a7f4a0dcde8a3d82de1,
+        );
     }
 
     #[test]

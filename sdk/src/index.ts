@@ -3,6 +3,8 @@ export * from "./field.js";
 export * from "./poseidon.js";
 export * from "./notes.js";
 export * from "./keys.js";
+export * from "./backup.js";
+export * from "./binding.js";
 export * from "./envelope.js";
 export * from "./tree.js";
 export * from "./circuits.js";

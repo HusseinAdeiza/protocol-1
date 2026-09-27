@@ -11,12 +11,19 @@ import {
   randomFieldElement,
   royaltyFor,
   selectNotes,
+  sellerNoteFromOffer,
+  settleBinding,
+  spendBinding,
+  toHex32,
+  verifyNote,
   type Hex,
   type OwnedNote,
 } from "../src/index.js";
 
 const WETH: Hex = "0x0bd7d308F8e1639FAb988df18a8011f41eaCad73";
 const POOL_ID = 0x1337n;
+const OFFER_ID: Hex = "0x9f1c6b3a0e2d4c5b6a79881726354453627180f9e8d7c6b5a4938271605f4e3d";
+const TARGET: Hex = "0x000000000000000000000000000000000000dEaD";
 
 const buyer = keysFromSeed(new Uint8Array(32).fill(11));
 const seller = keysFromSeed(new Uint8Array(32).fill(22));
@@ -64,6 +71,7 @@ describe("planning a spend", () => {
       tree,
       notes,
       withdrawAmount: 400n,
+      recipient: TARGET,
     });
 
     const [sent, change] = plan.outputs;
@@ -75,7 +83,15 @@ describe("planning a spend", () => {
 
   it("pads a single note with a zero note", () => {
     const {tree, notes} = scene([1_000n]);
-    const plan = planSpend({keys: buyer, poolId: POOL_ID, asset: WETH, tree, notes, withdrawAmount: 100n});
+    const plan = planSpend({
+      keys: buyer,
+      poolId: POOL_ID,
+      asset: WETH,
+      tree,
+      notes,
+      withdrawAmount: 100n,
+      recipient: TARGET,
+    });
 
     expect(plan.call.inputs.in_amounts).toEqual(["1000", "0"]);
     expect(plan.nullifiers[0]).not.toBe(plan.nullifiers[1]);
@@ -90,10 +106,38 @@ describe("planning a spend", () => {
     expect(openNote(seller.viewingSk, plan.outputs[1].payload)).toBeNull();
   });
 
+  it("binds the recipient, the unwrap flag and the payloads into the proof", () => {
+    const {tree, notes} = scene([1_000n]);
+    const plan = planSpend({
+      keys: buyer,
+      poolId: POOL_ID,
+      asset: WETH,
+      tree,
+      notes,
+      withdrawAmount: 100n,
+      recipient: TARGET,
+      unwrap: true,
+    });
+    const payloads = [plan.outputs[0].payload, plan.outputs[1].payload] as const;
+    const binding = spendBinding(TARGET, true, payloads);
+
+    expect(plan.call.publicInputs[8]).toBe(toHex32(binding));
+    expect(plan.call.inputs.recipient).toBe(binding.toString());
+    expect(spendBinding(TARGET, false, payloads)).not.toBe(binding);
+    expect(spendBinding(TARGET, true, [payloads[1], payloads[0]])).not.toBe(binding);
+  });
+
+  it("refuses a withdrawal with nobody to pay", () => {
+    const {tree, notes} = scene([1_000n]);
+    expect(() =>
+      planSpend({keys: buyer, poolId: POOL_ID, asset: WETH, tree, notes, withdrawAmount: 100n}),
+    ).toThrow(/recipient/);
+  });
+
   it("refuses to plan a spend the notes cannot cover", () => {
     const {tree, notes} = scene([10n]);
     expect(() =>
-      planSpend({keys: buyer, poolId: POOL_ID, asset: WETH, tree, notes, withdrawAmount: 100n}),
+      planSpend({keys: buyer, poolId: POOL_ID, asset: WETH, tree, notes, withdrawAmount: 100n, recipient: TARGET}),
     ).toThrow(/not enough/);
   });
 });
@@ -111,7 +155,7 @@ describe("planning a settlement", () => {
       price,
       priceBlinding: randomFieldElement(),
       royaltyBps: 500,
-      listingId: 0x5eedn,
+      offerId: OFFER_ID,
       seller: {ownerPk: seller.ownerPk, viewingPk: seller.viewingPk},
       creator: {ownerPk: creator.ownerPk, viewingPk: creator.viewingPk},
     });
@@ -133,7 +177,7 @@ describe("planning a settlement", () => {
       price: 400n,
       priceBlinding: randomFieldElement(),
       royaltyBps: 250,
-      listingId: 1n,
+      offerId: OFFER_ID,
       seller: {ownerPk: seller.ownerPk, viewingPk: seller.viewingPk},
       creator: {ownerPk: creator.ownerPk, viewingPk: creator.viewingPk},
     });
@@ -155,12 +199,60 @@ describe("planning a settlement", () => {
       price: 999n,
       priceBlinding: 1n,
       royaltyBps: 250,
-      listingId: 1n,
+      offerId: OFFER_ID,
       seller: {ownerPk: seller.ownerPk, viewingPk: seller.viewingPk},
       creator: {ownerPk: creator.ownerPk, viewingPk: creator.viewingPk},
     });
 
     expect(plan.royaltyAmount).toBe(25n);
     expect(plan.seller.note.amount).toBe(974n);
+  });
+
+  it("binds the proof to the offer and the payloads", () => {
+    const {tree, notes} = scene([1_000n]);
+    const plan = planSettle({
+      keys: buyer,
+      poolId: POOL_ID,
+      asset: WETH,
+      tree,
+      notes,
+      price: 400n,
+      priceBlinding: randomFieldElement(),
+      royaltyBps: 250,
+      offerId: OFFER_ID,
+      seller: {ownerPk: seller.ownerPk, viewingPk: seller.viewingPk},
+      creator: {ownerPk: creator.ownerPk, viewingPk: creator.viewingPk},
+    });
+    const payloads = [plan.seller.payload, plan.creator.payload, plan.change.payload] as const;
+
+    expect(plan.call.publicInputs[13]).toBe(toHex32(settleBinding(OFFER_ID, payloads)));
+    expect(plan.call.inputs.binding).toBe(settleBinding(OFFER_ID, payloads).toString());
+    expect(plan.call.inputs).not.toHaveProperty("seller_salt");
+    expect(settleBinding(OFFER_ID, [payloads[1], payloads[0], payloads[2]])).not.toBe(
+      settleBinding(OFFER_ID, payloads),
+    );
+  });
+
+  it("lets the seller rebuild their note from the offer alone", () => {
+    const {tree, notes} = scene([1_000n]);
+    const offer = {price: 999n, blinding: randomFieldElement()};
+    const plan = planSettle({
+      keys: buyer,
+      poolId: POOL_ID,
+      asset: WETH,
+      tree,
+      notes,
+      price: offer.price,
+      priceBlinding: offer.blinding,
+      royaltyBps: 250,
+      offerId: OFFER_ID,
+      seller: {ownerPk: seller.ownerPk, viewingPk: seller.viewingPk},
+      creator: {ownerPk: creator.ownerPk, viewingPk: creator.viewingPk},
+    });
+
+    const rebuilt = sellerNoteFromOffer(offer, 250, seller.ownerPk, WETH);
+    expect(rebuilt.commitment).toBe(plan.seller.commitment);
+    expect(rebuilt.note).toEqual(plan.seller.note);
+    expect(verifyNote(rebuilt.note, toHex32(plan.seller.commitment), WETH)).toBe(true);
   });
 });

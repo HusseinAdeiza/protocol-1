@@ -4,10 +4,15 @@
 //! basis points of it, rounded up.
 //!
 //! The price itself never appears on chain. Only its commitment does.
+//!
+//! `binding` is filled by the market with a hash of the offer id and the note
+//! payloads, so a proof settles one offer with one set of payloads. The
+//! seller's salt is derived from the price blinding rather than chosen by the
+//! buyer, so the seller can rebuild their note from the offer alone.
 
 use backlit::{
     bind, BPS_DENOM, commit, commit_price, MerkleProof, MAX_AMOUNT, MAX_DEPTH, owner_pk,
-    spend_note,
+    seller_salt, spend_note,
 };
 
 fn main(
@@ -23,7 +28,7 @@ fn main(
     seller_pk: pub Field,
     creator_pk: pub Field,
     buyer_pk: pub Field,
-    listing_id: pub Field,
+    binding: pub Field,
     spending_key: Field,
     in_amounts: [u128; 2],
     in_salts: [Field; 2],
@@ -33,11 +38,10 @@ fn main(
     price: u128,
     price_blinding: Field,
     royalty_amount: u128,
-    seller_salt: Field,
     creator_salt: Field,
     change_salt: Field,
 ) {
-    bind(pool_id, listing_id);
+    bind(pool_id, binding);
 
     assert(buyer_pk == owner_pk(spending_key), "not the buyer's key");
 
@@ -74,7 +78,7 @@ fn main(
     assert(change_amount < MAX_AMOUNT, "change out of range");
 
     assert(
-        seller_commitment == commit(asset, seller_amount, seller_pk, seller_salt),
+        seller_commitment == commit(asset, seller_amount, seller_pk, seller_salt(price_blinding)),
         "wrong seller note",
     );
     assert(
@@ -89,11 +93,11 @@ fn main(
 
 mod tests {
     use super::main;
-    use backlit::{commit, commit_price, hash2, MAX_DEPTH, nullify, owner_pk};
+    use backlit::{commit, commit_price, hash2, MAX_DEPTH, nullify, owner_pk, seller_salt};
 
     global WETH: Field = 0x0bd7d308F8e1639FAb988df18a8011f41eaCad73;
     global POOL: Field = 0x1337;
-    global LISTING: Field = 0x5eed;
+    global BINDING: Field = 0x5eed;
     global KEY: Field = 424242;
     global SELLER_PK: Field = 0xabc;
     global CREATOR_PK: Field = 0xdef;
@@ -136,7 +140,7 @@ mod tests {
         seller_amount: u128,
         change_amount: u128,
         price_commitment: Field,
-        listing_id: Field,
+        binding: Field,
         seller_pk: Field,
         creator_pk: Field,
     ) {
@@ -146,7 +150,7 @@ mod tests {
             WETH,
             s.root,
             s.nullifiers,
-            commit(WETH, seller_amount, seller_pk, 51),
+            commit(WETH, seller_amount, seller_pk, seller_salt(BLINDING)),
             commit(WETH, royalty_amount, creator_pk, 52),
             commit(WETH, change_amount, s.buyer_pk, 53),
             price_commitment,
@@ -154,7 +158,7 @@ mod tests {
             seller_pk,
             creator_pk,
             s.buyer_pk,
-            listing_id,
+            binding,
             KEY,
             [IN_A, IN_B],
             [11, 22],
@@ -164,7 +168,6 @@ mod tests {
             price,
             BLINDING,
             royalty_amount,
-            51,
             52,
             53,
         );
@@ -173,7 +176,7 @@ mod tests {
     /// Price 800 at 5% is a royalty of 40, leaving 760 to the seller and 200
     /// in change.
     fn honest() {
-        settle(800, 500, 40, 760, 200, commit_price(800, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 500, 40, 760, 200, commit_price(800, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test]
@@ -183,64 +186,64 @@ mod tests {
 
     #[test]
     fn a_collection_with_no_royalty_pays_the_whole_price_to_the_seller() {
-        settle(800, 0, 0, 800, 200, commit_price(800, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 0, 0, 800, 200, commit_price(800, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test]
     fn a_full_royalty_pays_the_whole_price_to_the_creator() {
-        settle(800, 10000, 800, 0, 200, commit_price(800, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 10000, 800, 0, 200, commit_price(800, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test]
     fn a_royalty_that_does_not_divide_evenly_rounds_up() {
         // 999 at 2.5% is 24.975, so the creator gets 25.
-        settle(999, 250, 25, 974, 1, commit_price(999, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(999, 250, 25, 974, 1, commit_price(999, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "royalty underpaid")]
     fn a_royalty_one_wei_short_fails() {
-        settle(999, 250, 24, 975, 1, commit_price(999, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(999, 250, 24, 975, 1, commit_price(999, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "royalty overpaid")]
     fn a_royalty_one_wei_over_fails() {
-        settle(999, 250, 26, 973, 1, commit_price(999, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(999, 250, 26, 973, 1, commit_price(999, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "royalty underpaid")]
     fn skipping_the_royalty_entirely_fails() {
-        settle(800, 500, 0, 800, 200, commit_price(800, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 500, 0, 800, 200, commit_price(800, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "royalty overpaid")]
     fn quoting_a_lower_rate_than_the_notes_pay_fails() {
         // The notes carry a 5% royalty while the chain says 2.5%.
-        settle(800, 250, 40, 760, 200, commit_price(800, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 250, 40, 760, 200, commit_price(800, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "price does not open the commitment")]
     fn a_price_that_does_not_open_the_commitment_fails() {
-        settle(800, 500, 40, 760, 200, commit_price(700, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 500, 40, 760, 200, commit_price(700, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "wrong seller note")]
     fn shorting_the_seller_fails() {
-        settle(800, 500, 40, 700, 200, commit_price(800, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 500, 40, 700, 200, commit_price(800, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "wrong change note")]
     fn taking_more_change_than_is_left_fails() {
-        settle(800, 500, 40, 760, 300, commit_price(800, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 500, 40, 760, 300, commit_price(800, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "attempt to subtract with overflow")]
     fn spending_more_than_the_notes_hold_fails() {
-        settle(1500, 500, 75, 1425, 0, commit_price(1500, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(1500, 500, 75, 1425, 0, commit_price(1500, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     #[test(should_fail_with = "basis points above 100%")]
     fn a_rate_above_one_hundred_percent_fails() {
-        settle(800, 10001, 801, 0, 200, commit_price(800, BLINDING), LISTING, SELLER_PK, CREATOR_PK);
+        settle(800, 10001, 801, 0, 200, commit_price(800, BLINDING), BINDING, SELLER_PK, CREATOR_PK);
     }
 
     /// The seller and the creator are named in the proof, so a settlement
@@ -253,7 +256,7 @@ mod tests {
             WETH,
             s.root,
             s.nullifiers,
-            commit(WETH, 760, 0x999, 51),
+            commit(WETH, 760, 0x999, seller_salt(BLINDING)),
             commit(WETH, 40, CREATOR_PK, 52),
             commit(WETH, 200, s.buyer_pk, 53),
             commit_price(800, BLINDING),
@@ -261,7 +264,7 @@ mod tests {
             SELLER_PK,
             CREATOR_PK,
             s.buyer_pk,
-            LISTING,
+            BINDING,
             KEY,
             [IN_A, IN_B],
             [11, 22],
@@ -271,7 +274,73 @@ mod tests {
             800,
             BLINDING,
             40,
-            51,
+            52,
+            53,
+        );
+    }
+
+    /// The seller's salt is not the buyer's to choose: a seller note under any
+    /// other salt is one the seller could not rebuild from the offer.
+    #[test(should_fail_with = "wrong seller note")]
+    fn a_seller_note_under_a_salt_the_buyer_picked_fails() {
+        let s = scene();
+        main(
+            POOL,
+            WETH,
+            s.root,
+            s.nullifiers,
+            commit(WETH, 760, SELLER_PK, 51),
+            commit(WETH, 40, CREATOR_PK, 52),
+            commit(WETH, 200, s.buyer_pk, 53),
+            commit_price(800, BLINDING),
+            500,
+            SELLER_PK,
+            CREATOR_PK,
+            s.buyer_pk,
+            BINDING,
+            KEY,
+            [IN_A, IN_B],
+            [11, 22],
+            s.siblings,
+            [0, 1],
+            [1, 1],
+            800,
+            BLINDING,
+            40,
+            52,
+            53,
+        );
+    }
+
+    /// The seller rebuilds their note from the offer opening alone: amount
+    /// from the price and the rate, salt from the blinding.
+    #[test]
+    fn the_seller_note_is_rebuildable_from_the_offer_opening() {
+        let rebuilt = commit(WETH, 800 - 40, SELLER_PK, seller_salt(BLINDING));
+        let s = scene();
+        main(
+            POOL,
+            WETH,
+            s.root,
+            s.nullifiers,
+            rebuilt,
+            commit(WETH, 40, CREATOR_PK, 52),
+            commit(WETH, 200, s.buyer_pk, 53),
+            commit_price(800, BLINDING),
+            500,
+            SELLER_PK,
+            CREATOR_PK,
+            s.buyer_pk,
+            BINDING,
+            KEY,
+            [IN_A, IN_B],
+            [11, 22],
+            s.siblings,
+            [0, 1],
+            [1, 1],
+            800,
+            BLINDING,
+            40,
             52,
             53,
         );
@@ -285,7 +354,7 @@ mod tests {
             WETH,
             s.root,
             s.nullifiers,
-            commit(WETH, 760, SELLER_PK, 51),
+            commit(WETH, 760, SELLER_PK, seller_salt(BLINDING)),
             commit(WETH, 40, CREATOR_PK, 52),
             commit(WETH, 200, s.buyer_pk, 53),
             commit_price(800, BLINDING),
@@ -293,7 +362,7 @@ mod tests {
             SELLER_PK,
             CREATOR_PK,
             owner_pk(KEY + 1),
-            LISTING,
+            BINDING,
             KEY,
             [IN_A, IN_B],
             [11, 22],
@@ -303,7 +372,6 @@ mod tests {
             800,
             BLINDING,
             40,
-            51,
             52,
             53,
         );
@@ -317,7 +385,7 @@ mod tests {
             WETH,
             s.root + 1,
             s.nullifiers,
-            commit(WETH, 760, SELLER_PK, 51),
+            commit(WETH, 760, SELLER_PK, seller_salt(BLINDING)),
             commit(WETH, 40, CREATOR_PK, 52),
             commit(WETH, 200, s.buyer_pk, 53),
             commit_price(800, BLINDING),
@@ -325,7 +393,7 @@ mod tests {
             SELLER_PK,
             CREATOR_PK,
             s.buyer_pk,
-            LISTING,
+            BINDING,
             KEY,
             [IN_A, IN_B],
             [11, 22],
@@ -335,7 +403,6 @@ mod tests {
             800,
             BLINDING,
             40,
-            51,
             52,
             53,
         );

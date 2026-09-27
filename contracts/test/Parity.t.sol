@@ -8,6 +8,8 @@ import {LeanIMTData, InternalLeanIMT} from "@zk-kit/lean-imt.sol/InternalLeanIMT
 import {PoseidonT3} from "poseidon-solidity/PoseidonT3.sol";
 import {PoseidonT5} from "poseidon-solidity/PoseidonT5.sol";
 
+import {SNARK_SCALAR_FIELD} from "../src/libs/Field.sol";
+
 /// @notice Holds Solidity to the same answers as the circuits and the browser.
 /// The vectors come from the ops package's `vectors` script, which produces
 /// them with the same libraries the web app ships.
@@ -130,5 +132,34 @@ contract ParityTest is Test {
         for (uint256 i = 0; i < royalty.length; i++) {
             assertEq((price[i] * basisPoints[i] + 9_999) / 10_000, royalty[i], "rounding drifted");
         }
+    }
+
+    function test_sellerSaltMatchesTheVectors() public view {
+        assertEq(
+            PoseidonT3.hash([vectors.readUint(".sellerSalt.blinding"), vectors.readUint(".sellerSalt.tag")]),
+            vectors.readUint(".sellerSalt.out")
+        );
+    }
+
+    /// @dev `abi.encode` of a fixed-size array of `bytes` is the part most
+    /// likely to differ between viem and solc, so the SDK's binding hashes are
+    /// held to the same expression the pool and the market use.
+    function test_bindingsMatchTheVectors() public view {
+        bytes[] memory spendPayloads = vectors.readBytesArray(".spendBinding.payloads");
+        bytes[2] memory two = [spendPayloads[0], spendPayloads[1]];
+        bytes32 spend = keccak256(
+            abi.encode(
+                vectors.readAddress(".spendBinding.recipient"),
+                vectors.readBool(".spendBinding.unwrap"),
+                keccak256(abi.encode(two))
+            )
+        );
+        assertEq(uint256(spend) % SNARK_SCALAR_FIELD, vectors.readUint(".spendBinding.out"));
+
+        bytes[] memory settlePayloads = vectors.readBytesArray(".settleBinding.payloads");
+        bytes[3] memory three = [settlePayloads[0], settlePayloads[1], settlePayloads[2]];
+        bytes32 settle =
+            keccak256(abi.encode(vectors.readBytes32(".settleBinding.offerId"), keccak256(abi.encode(three))));
+        assertEq(uint256(settle) % SNARK_SCALAR_FIELD, vectors.readUint(".settleBinding.out"));
     }
 }

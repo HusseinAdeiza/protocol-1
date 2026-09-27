@@ -27,8 +27,17 @@ import {TestnetWETH} from "../test/mocks/TestnetWETH.sol";
 ///   FEE_WEI           flat fee per settled sale
 ///   FIXTURES          when true, also deploys a test collection
 ///   FIXTURE_BASE_URI  metadata base for that collection
+///
+/// On Robinhood Chain mainnet (4663) the contracts are immutable from the
+/// first block, so the script refuses any configuration it would regret:
+/// WETH must be the canonical one, the guardian must be a contract distinct
+/// from the deployer, the fee recipient must be explicit and not the deployer,
+/// and no fixtures.
 contract Deploy is Script {
     using stdJson for string;
+
+    uint256 internal constant MAINNET = 4663;
+    address internal constant MAINNET_WETH = 0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73;
 
     struct Config {
         address deployer;
@@ -50,7 +59,7 @@ contract Deploy is Script {
 
     function run() external {
         uint256 deployerKey = vm.envUint("DEPLOYER_KEY");
-        Config memory config = _config(vm.addr(deployerKey));
+        Config memory config = loadConfig(vm.addr(deployerKey));
 
         vm.startBroadcast(deployerKey);
         Deployed memory out = _deploy(config);
@@ -59,7 +68,8 @@ contract Deploy is Script {
         _report(config, out);
     }
 
-    function _config(address deployer) private view returns (Config memory config) {
+    /// @dev Public so a test can run the mainnet guards without broadcasting.
+    function loadConfig(address deployer) public view returns (Config memory config) {
         config.deployer = deployer;
         config.guardian = vm.envOr("GUARDIAN", deployer);
         config.feeRecipient = vm.envOr("FEE_RECIPIENT", deployer);
@@ -67,6 +77,18 @@ contract Deploy is Script {
         config.feeWei = vm.envOr("FEE_WEI", uint256(0.0002 ether));
         config.weth = vm.envOr("WETH_ADDRESS", address(0));
         config.fixtures = vm.envOr("FIXTURES", false);
+
+        if (block.chainid == MAINNET) {
+            require(config.weth == MAINNET_WETH, "mainnet: WETH_ADDRESS must be the canonical WETH");
+            // The defaults above fall back to the deployer, which is exactly
+            // what mainnet must not get, so both have to be set explicitly.
+            require(vm.envExists("GUARDIAN"), "mainnet: GUARDIAN must be set");
+            require(vm.envExists("FEE_RECIPIENT"), "mainnet: FEE_RECIPIENT must be set");
+            require(config.guardian != deployer, "mainnet: the guardian cannot be the deployer");
+            require(config.feeRecipient != deployer, "mainnet: the fee recipient cannot be the deployer");
+            require(config.guardian.code.length > 0, "mainnet: the guardian must be a deployed Safe");
+            require(!config.fixtures, "mainnet: FIXTURES must be off");
+        }
     }
 
     function _deploy(Config memory config) private returns (Deployed memory out) {
@@ -84,6 +106,10 @@ contract Deploy is Script {
             pool, IVerifier(out.settleVerifier), config.feeRecipient, config.feeWei, config.guardian
         );
         pool.initMarket(address(market));
+
+        require(pool.market() == address(market), "the pool does not point at the market");
+        require(address(market.pool()) == address(pool), "the market does not point at the pool");
+        require(market.poolId() == pool.poolId(), "the pool ids disagree");
 
         out.pool = address(pool);
         out.market = address(market);

@@ -10,6 +10,9 @@ import {
   poseidon4,
   priceCommitment,
   royaltyFor,
+  sellerSalt,
+  settleBinding,
+  spendBinding,
   toHex32,
   type Hex,
 } from "../src/index.js";
@@ -28,6 +31,9 @@ const vectors = JSON.parse(
   };
   priceCommitment: {price: string; blinding: string; out: string};
   royalties: Array<{price: string; bps: number; royalty: string}>;
+  sellerSalt: {blinding: string; out: string};
+  spendBinding: {recipient: Hex; unwrap: boolean; payloads: [Hex, Hex]; out: string};
+  settleBinding: {offerId: Hex; payloads: [Hex, Hex, Hex]; out: string};
 };
 
 describe("the vectors the contracts and circuits are held to", () => {
@@ -91,5 +97,16 @@ describe("the vectors the contracts and circuits are held to", () => {
       node = onTheRight ? poseidon2(sibling, node) : poseidon2(node, sibling);
     }
     expect(toHex32(node)).toBe(vectors.tree.membership.root);
+  });
+
+  it("derives the seller salt the circuit derives", () => {
+    expect(toHex32(sellerSalt(BigInt(vectors.sellerSalt.blinding)))).toBe(vectors.sellerSalt.out);
+  });
+
+  it("hashes the call context the way the contracts do", () => {
+    const spend = vectors.spendBinding;
+    expect(toHex32(spendBinding(spend.recipient, spend.unwrap, spend.payloads))).toBe(spend.out);
+    const settle = vectors.settleBinding;
+    expect(toHex32(settleBinding(settle.offerId, settle.payloads))).toBe(settle.out);
   });
 });

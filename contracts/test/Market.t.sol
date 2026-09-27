@@ -6,10 +6,13 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {BacklitMarket} from "../src/BacklitMarket.sol";
 import {BacklitPool} from "../src/BacklitPool.sol";
 import {IVerifier} from "../src/interfaces/IVerifier.sol";
+import {SNARK_SCALAR_FIELD} from "../src/libs/Field.sol";
 
 import {BacklitTest} from "./Base.t.sol";
 import {EchoVerifier} from "./mocks/EchoVerifier.sol";
+import {HollowCollection} from "./mocks/HollowCollection.sol";
 import {PlainCollection} from "./mocks/PlainCollection.sol";
+import {RejectingRecipient} from "./mocks/RejectingRecipient.sol";
 import {TestCollection} from "./mocks/TestCollection.sol";
 
 contract MarketTest is BacklitTest {
@@ -52,6 +55,26 @@ contract MarketTest is BacklitTest {
         assertEq(listing.tokenId, 1);
         assertEq(listing.seller, seller);
         assertTrue(listing.active);
+    }
+
+    function test_listRefusesATransferThatDidNotHappen() public {
+        HollowCollection hollow = new HollowCollection(creator, uint96(ROYALTY_BPS));
+        vm.startPrank(seller);
+        hollow.mint(seller);
+        vm.expectRevert(BacklitMarket.NotEscrowed.selector);
+        market.list(address(hollow), 1);
+        vm.stopPrank();
+    }
+
+    /// @dev Only `list` may put a token in escrow. A safe transfer from outside
+    /// would create no listing and could never be returned.
+    function test_theMarketRefusesSafeTransfers() public {
+        vm.startPrank(seller);
+        collection.mint(seller);
+        vm.expectRevert();
+        collection.safeTransferFrom(seller, address(market), 1);
+        vm.stopPrank();
+        assertEq(IERC721(address(collection)).ownerOf(1), seller);
     }
 
     function test_listRefusesACollectionWithoutRoyaltyTerms() public {
@@ -331,8 +354,57 @@ contract MarketTest is BacklitTest {
             assertEq(publicInputs[10], SELLER_PK);
             assertEq(publicInputs[11], CREATOR_PK);
             assertEq(publicInputs[12], BUYER_PK);
-            assertEq(publicInputs[13], listingId);
+            bytes32 binding = keccak256(abi.encode(offerId, keccak256(abi.encode(emptyPayloads()))));
+            assertEq(publicInputs[13], bytes32(uint256(binding) % SNARK_SCALAR_FIELD), "binding slot");
+            assertTrue(publicInputs[13] != listingId);
         }
+    }
+
+    function test_theSettleBindingCoversTheOfferAndEveryPayload() public view {
+        bytes[3] memory payloads = emptyPayloads();
+        bytes32 honest = market.settleBinding(bytes32(uint256(1)), payloads);
+
+        assertTrue(market.settleBinding(bytes32(uint256(2)), payloads) != honest, "offer");
+        assertTrue(
+            market.settleBinding(bytes32(uint256(1)), [payloads[1], payloads[0], payloads[2]]) != honest, "order"
+        );
+        assertTrue(
+            market.settleBinding(bytes32(uint256(1)), [payloads[0], payloads[1], bytes(hex"06")]) != honest,
+            "payload"
+        );
+        assertLt(uint256(honest), SNARK_SCALAR_FIELD);
+    }
+
+    function test_aFeeRecipientThatRefusesETHDoesNotBlockASale() public {
+        RejectingRecipient router = new RejectingRecipient();
+        vm.prank(guardian);
+        market.setFeeRecipient(address(router));
+
+        bytes32 root = _fund();
+        (, bytes32 offerId) = _accepted();
+
+        vm.expectEmit(true, false, false, true, address(market));
+        emit BacklitMarket.FeeDeferred(address(router), FEE);
+        market.settle{value: FEE}(offerId, hex"00", settlePublic(root), emptyPayloads());
+
+        assertEq(IERC721(address(collection)).ownerOf(1), buyer, "the sale went through");
+        assertEq(market.feesOwed(), FEE);
+        assertEq(address(market).balance, FEE);
+
+        vm.expectRevert(BacklitMarket.FeeTransferFailed.selector);
+        market.forwardFees();
+
+        router.setRefusing(false);
+        vm.prank(stranger);
+        market.forwardFees();
+        assertEq(address(router).balance, FEE);
+        assertEq(market.feesOwed(), 0);
+        assertEq(address(market).balance, 0);
+    }
+
+    function test_forwardingNothingIsANoOp() public {
+        market.forwardFees();
+        assertEq(market.feesOwed(), 0);
     }
 
     function test_aCollectionWithNoRoyaltyPaysTheThirdNoteToTheSeller() public {

@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {BacklitPool} from "../src/BacklitPool.sol";
-import {Field} from "../src/libs/Field.sol";
+import {Field, SNARK_SCALAR_FIELD} from "../src/libs/Field.sol";
 import {IVerifier} from "../src/interfaces/IVerifier.sol";
 import {IWETH} from "../src/interfaces/IWETH.sol";
 
@@ -75,6 +75,49 @@ contract PoolTest is BacklitTest {
         small.depositETH{value: 1 wei}(BUYER_PK, bytes32(uint256(2)), hex"");
     }
 
+    /// @dev WETH sent straight to the pool is not a deposit; if it counted
+    /// towards the cap, anyone could fill the cap for the price of the WETH.
+    function test_aDonationDoesNotUseUpTheCap() public {
+        BacklitPool small =
+            new BacklitPool(IWETH(address(weth)), IVerifier(address(spendVerifier)), guardian, 1 ether);
+        small.initMarket(address(market));
+
+        vm.startPrank(stranger);
+        weth.deposit{value: 5 ether}();
+        weth.transfer(address(small), 5 ether);
+        vm.stopPrank();
+
+        vm.prank(buyer);
+        small.depositETH{value: 1 ether}(BUYER_PK, bytes32(uint256(1)), hex"");
+        assertEq(small.totalDeposited(), 1 ether);
+    }
+
+    function test_aWithdrawalFreesRoomUnderTheCap() public {
+        BacklitPool small =
+            new BacklitPool(IWETH(address(weth)), IVerifier(address(spendVerifier)), guardian, 1 ether);
+        small.initMarket(address(market));
+
+        vm.prank(buyer);
+        small.depositETH{value: 1 ether}(BUYER_PK, bytes32(uint256(1)), hex"");
+
+        BacklitPool.SpendPublic memory p = BacklitPool.SpendPublic({
+            root: small.currentRoot(),
+            nullifiers: [bytes32(uint256(1001)), bytes32(uint256(1002))],
+            outputs: [bytes32(uint256(2001)), bytes32(uint256(2002))],
+            withdrawAmount: 0.4 ether,
+            recipient: buyer,
+            unwrap: false
+        });
+        small.spend(hex"00", p, [bytes(hex"aa"), bytes(hex"bb")]);
+
+        vm.prank(buyer);
+        small.depositETH{value: 0.4 ether}(BUYER_PK, bytes32(uint256(2)), hex"");
+
+        vm.prank(buyer);
+        vm.expectRevert(BacklitPool.CapExceeded.selector);
+        small.depositETH{value: 1 wei}(BUYER_PK, bytes32(uint256(3)), hex"");
+    }
+
     function test_depositsCanBePausedAndResumed() public {
         vm.prank(guardian);
         pool.setDepositsPaused(true);
@@ -91,18 +134,29 @@ contract PoolTest is BacklitTest {
 
     // ----------------------------------------------------------------- roots
 
-    function test_theRootRingRemembersSixtyFourRoots() public {
-        bytes32 first;
-        for (uint256 i = 0; i < 64; i++) {
-            depositAs(buyer, 0.01 ether, BUYER_PK, bytes32(i + 1));
-            if (i == 0) first = pool.currentRoot();
+    /// @dev A proof built on a busy pool must not expire before it lands, so
+    /// no root is ever forgotten.
+    function test_aRootOlderThanSixtyFourInsertsIsStillAccepted() public {
+        depositAs(buyer, 1 ether, BUYER_PK, bytes32(uint256(1)));
+        bytes32 first = pool.currentRoot();
+        for (uint256 i = 0; i < 100; i++) {
+            depositAs(buyer, 0.01 ether, BUYER_PK, bytes32(i + 2));
         }
-        assertTrue(pool.isKnownRoot(first), "the oldest root of the window is still known");
-        assertEq(pool.knownRoots().length, 64);
+        assertTrue(pool.isKnownRoot(first), "the first root is still known");
 
-        depositAs(buyer, 0.01 ether, BUYER_PK, bytes32(uint256(65)));
-        assertFalse(pool.isKnownRoot(first), "the ring evicts the oldest root");
-        assertTrue(pool.isKnownRoot(pool.currentRoot()));
+        pool.spend(
+            hex"00",
+            BacklitPool.SpendPublic({
+                root: first,
+                nullifiers: [bytes32(uint256(1001)), bytes32(uint256(1002))],
+                outputs: [bytes32(uint256(2001)), bytes32(uint256(2002))],
+                withdrawAmount: 0,
+                recipient: address(0),
+                unwrap: false
+            }),
+            [bytes(hex"aa"), bytes(hex"bb")]
+        );
+        assertTrue(pool.isSpent(bytes32(uint256(1001))));
     }
 
     function test_anUnknownRootIsRejected() public {
@@ -199,6 +253,22 @@ contract PoolTest is BacklitTest {
         pool.spend(hex"00", p, [bytes(hex"aa"), bytes(hex"bb")]);
     }
 
+    function test_aWithdrawalToNobodyIsRefused() public {
+        depositAs(buyer, 5 ether, BUYER_PK, bytes32(uint256(1)));
+        BacklitPool.SpendPublic memory p = _spendPublic(1 ether, address(0), true);
+
+        vm.expectRevert(BacklitPool.BadRecipient.selector);
+        pool.spend(hex"00", p, [bytes(hex"aa"), bytes(hex"bb")]);
+    }
+
+    function test_aWithdrawalToThePoolItselfIsRefused() public {
+        depositAs(buyer, 5 ether, BUYER_PK, bytes32(uint256(1)));
+        BacklitPool.SpendPublic memory p = _spendPublic(1 ether, address(pool), false);
+
+        vm.expectRevert(BacklitPool.BadRecipient.selector);
+        pool.spend(hex"00", p, [bytes(hex"aa"), bytes(hex"bb")]);
+    }
+
     function test_withdrawalsSurviveADepositPause() public {
         depositAs(buyer, 5 ether, BUYER_PK, bytes32(uint256(1)));
 
@@ -242,8 +312,21 @@ contract PoolTest is BacklitTest {
             assertEq(publicInputs[5], p.outputs[0]);
             assertEq(publicInputs[6], p.outputs[1]);
             assertEq(publicInputs[7], bytes32(p.withdrawAmount));
-            assertEq(publicInputs[8], bytes32(uint256(uint160(buyer))));
+            bytes[2] memory payloads = [bytes(hex"aa"), bytes(hex"bb")];
+            bytes32 binding = keccak256(abi.encode(buyer, false, keccak256(abi.encode(payloads))));
+            assertEq(publicInputs[8], bytes32(uint256(binding) % SNARK_SCALAR_FIELD), "recipient slot binds the call");
         }
+    }
+
+    function test_theSpendBindingCoversEveryPayoutTerm() public view {
+        bytes[2] memory payloads = [bytes(hex"aa"), bytes(hex"bb")];
+        bytes32 honest = pool.spendBinding(buyer, false, payloads);
+
+        assertTrue(pool.spendBinding(buyer, true, payloads) != honest, "unwrap");
+        assertTrue(pool.spendBinding(stranger, false, payloads) != honest, "recipient");
+        assertTrue(pool.spendBinding(buyer, false, [bytes(hex"bb"), bytes(hex"aa")]) != honest, "order");
+        assertTrue(pool.spendBinding(buyer, false, [bytes(hex"aa"), bytes(hex"bc")]) != honest, "payload");
+        assertLt(uint256(honest), SNARK_SCALAR_FIELD);
     }
 
     // ----------------------------------------------------------- permissions

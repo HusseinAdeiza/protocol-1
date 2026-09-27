@@ -1,6 +1,10 @@
 //! Spend: two input notes in, two output notes out, with an optional public
 //! withdrawal. Consolidating dust, sending value inside the pool and cashing
 //! out to WETH are all the same proof.
+//!
+//! `recipient` is only bound, never used in a constraint. The pool fills it
+//! with a hash of the withdrawal recipient, the unwrap flag and the output
+//! payloads, which ties a proof to exactly one way of paying out.
 
 use backlit::{bind, commit, MerkleProof, MAX_AMOUNT, MAX_DEPTH, owner_pk, spend_note};
 

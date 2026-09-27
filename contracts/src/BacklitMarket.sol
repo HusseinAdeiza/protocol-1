@@ -3,7 +3,6 @@ pragma solidity 0.8.28;
 
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {IERC2981} from "@openzeppelin/contracts/interfaces/IERC2981.sol";
 
 import {BacklitPool} from "./BacklitPool.sol";
@@ -15,7 +14,11 @@ import {Field} from "./libs/Field.sol";
 /// proof: the seller's share, the creator's royalty and the buyer's change
 /// all land as notes in the pool, and the chain records that the royalty was
 /// exactly the collection's basis points of a price nobody can read.
-contract BacklitMarket is IERC721Receiver {
+///
+/// The market takes tokens with `transferFrom` only and does not implement
+/// `onERC721Received`: a token sent with `safeTransferFrom` outside `list`
+/// would have no listing and no way back, so the transfer is refused instead.
+contract BacklitMarket {
     using Field for bytes32;
 
     /// @notice ERC-2981 asked for royalties on a sale price of 10,000 returns
@@ -38,6 +41,9 @@ contract BacklitMarket is IERC721Receiver {
 
     address public feeRecipient;
     uint256 public feeWei;
+
+    /// @notice Fees a settlement could not forward, held until `forwardFees`.
+    uint256 public feesOwed;
 
     struct Keys {
         bytes32 ownerPk;
@@ -128,6 +134,8 @@ contract BacklitMarket is IERC721Receiver {
         uint256 royaltyBps,
         uint256 feeWei
     );
+    event FeeDeferred(address indexed feeRecipient, uint256 amount);
+    event FeesForwarded(address indexed feeRecipient, uint256 amount);
     event FeeRecipientSet(address feeRecipient);
     event FeeWeiSet(uint256 feeWei);
 
@@ -140,6 +148,7 @@ contract BacklitMarket is IERC721Receiver {
     error ListingInactive();
     error NoKeys();
     error NotAccepted();
+    error NotEscrowed();
     error NotTheBuyer();
     error NotTheGuardian();
     error NotTheSeller();
@@ -231,6 +240,9 @@ contract BacklitMarket is IERC721Receiver {
         listings[listingId] = Listing(collection, tokenId, msg.sender, true);
 
         IERC721(collection).transferFrom(msg.sender, address(this), tokenId);
+        // A collection that reports success without moving the token would
+        // leave a listing with nothing behind it.
+        if (IERC721(collection).ownerOf(tokenId) != address(this)) revert NotEscrowed();
 
         emit Listed(listingId, collection, tokenId, msg.sender, royaltyReceiver, bps);
     }
@@ -375,7 +387,7 @@ contract BacklitMarket is IERC721Receiver {
         // addressed to the seller so it stays spendable.
         if (bps == 0) creatorPk = sellerPk;
 
-        _verify(proof, p, o, sellerPk, creatorPk, bps);
+        _verify(offerId, proof, p, payloads, o, sellerPk, creatorPk, bps);
 
         o.settled = true;
         listing.active = false;
@@ -391,17 +403,24 @@ contract BacklitMarket is IERC721Receiver {
 
         IERC721(listing.collection).safeTransferFrom(address(this), o.nftRecipient, listing.tokenId);
 
+        // A fee recipient that stops accepting ETH must not stop sales, so a
+        // failed send is held and forwarded later by anyone.
         if (msg.value > 0) {
             (bool paid,) = feeRecipient.call{value: msg.value}("");
-            if (!paid) revert FeeTransferFailed();
+            if (!paid) {
+                feesOwed += msg.value;
+                emit FeeDeferred(feeRecipient, msg.value);
+            }
         }
 
         emit Settled(offerId, o.listingId, o.nftRecipient, royaltyReceiver, bps, msg.value);
     }
 
     function _verify(
+        bytes32 offerId,
         bytes calldata proof,
         SettlePublic calldata p,
+        bytes[3] calldata payloads,
         Offer storage o,
         bytes32 sellerPk,
         bytes32 creatorPk,
@@ -421,9 +440,17 @@ contract BacklitMarket is IERC721Receiver {
         publicInputs[10] = sellerPk;
         publicInputs[11] = creatorPk;
         publicInputs[12] = o.buyerPk;
-        publicInputs[13] = o.listingId;
+        publicInputs[13] = settleBinding(offerId, payloads);
 
         if (!settleVerifier.verify(proof, publicInputs)) revert BadProof();
+    }
+
+    /// @notice What the settle circuit's binding input is set to. The circuit
+    /// only binds that slot, so hashing the offer id and the payloads into it
+    /// ties a proof to one offer (and with it the listing, the buyer and the
+    /// NFT recipient) and to payloads nobody can swap for unreadable ones.
+    function settleBinding(bytes32 offerId, bytes[3] calldata payloads) public pure returns (bytes32) {
+        return keccak256(abi.encode(offerId, keccak256(abi.encode(payloads)))).reduce();
     }
 
     function _writeReceipt(
@@ -478,6 +505,17 @@ contract BacklitMarket is IERC721Receiver {
 
     // ---------------------------------------------------------------- guardian
 
+    /// @notice Sends deferred fees to the current fee recipient. Anyone may
+    /// call it; the money can only go to `feeRecipient`.
+    function forwardFees() external nonReentrant {
+        uint256 amount = feesOwed;
+        if (amount == 0) return;
+        feesOwed = 0;
+        (bool paid,) = feeRecipient.call{value: amount}("");
+        if (!paid) revert FeeTransferFailed();
+        emit FeesForwarded(feeRecipient, amount);
+    }
+
     function setFeeRecipient(address feeRecipient_) external onlyGuardian {
         if (feeRecipient_ == address(0)) revert ZeroAddress();
         feeRecipient = feeRecipient_;
@@ -488,11 +526,5 @@ contract BacklitMarket is IERC721Receiver {
         if (feeWei_ > MAX_FEE_WEI) revert FeeTooHigh();
         feeWei = feeWei_;
         emit FeeWeiSet(feeWei_);
-    }
-
-    // ------------------------------------------------------------------- misc
-
-    function onERC721Received(address, address, uint256, bytes calldata) external pure returns (bytes4) {
-        return IERC721Receiver.onERC721Received.selector;
     }
 }

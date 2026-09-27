@@ -22,7 +22,8 @@ export interface SpendInputs {
   outputCommitments: [bigint, bigint];
   nullifiers: [bigint, bigint];
   withdrawAmount: bigint;
-  recipient: Hex;
+  /** `spendBinding(recipient, unwrap, payloads)`, placed in the circuit's `recipient` slot. */
+  binding: bigint;
 }
 
 export interface SettleInputs {
@@ -40,11 +41,11 @@ export interface SettleInputs {
   sellerPk: bigint;
   creatorPk: bigint;
   buyerPk: bigint;
-  listingId: bigint;
+  /** `settleBinding(offerId, payloads)`. */
+  binding: bigint;
   price: bigint;
   priceBlinding: bigint;
   royaltyAmount: bigint;
-  sellerSalt: bigint;
   creatorSalt: bigint;
   changeSalt: bigint;
   sellerAmount: bigint;
@@ -73,7 +74,7 @@ export function spendCall(input: SpendInputs): CircuitCall {
       nullifiers: input.nullifiers.map(dec),
       out_commitments: input.outputCommitments.map(dec),
       withdraw_amount: dec(input.withdrawAmount),
-      recipient: dec(BigInt(input.recipient)),
+      recipient: dec(input.binding),
       spending_key: dec(input.spendingKey),
       in_amounts: [dec(a.amount), dec(b.amount)],
       in_salts: [dec(a.salt), dec(b.salt)],
@@ -93,7 +94,7 @@ export function spendCall(input: SpendInputs): CircuitCall {
       toHex32(input.outputCommitments[0]),
       toHex32(input.outputCommitments[1]),
       toHex32(input.withdrawAmount),
-      toHex32(BigInt(input.recipient)),
+      toHex32(input.binding),
     ],
   };
 }
@@ -116,7 +117,7 @@ export function settleCall(input: SettleInputs): CircuitCall {
       seller_pk: dec(input.sellerPk),
       creator_pk: dec(input.creatorPk),
       buyer_pk: dec(input.buyerPk),
-      listing_id: dec(input.listingId),
+      binding: dec(input.binding),
       spending_key: dec(input.spendingKey),
       in_amounts: [dec(a.amount), dec(b.amount)],
       in_salts: [dec(a.salt), dec(b.salt)],
@@ -126,7 +127,6 @@ export function settleCall(input: SettleInputs): CircuitCall {
       price: dec(input.price),
       price_blinding: dec(input.priceBlinding),
       royalty_amount: dec(input.royaltyAmount),
-      seller_salt: dec(input.sellerSalt),
       creator_salt: dec(input.creatorSalt),
       change_salt: dec(input.changeSalt),
     },
@@ -144,7 +144,7 @@ export function settleCall(input: SettleInputs): CircuitCall {
       toHex32(input.sellerPk),
       toHex32(input.creatorPk),
       toHex32(input.buyerPk),
-      toHex32(input.listingId),
+      toHex32(input.binding),
     ],
   };
 }

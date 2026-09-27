@@ -7,10 +7,13 @@
 #   contracts/src/verifiers/<Name>Verifier.sol
 #   web/public/circuits/<name>.<hash>.json   content-addressed, for the prover
 #
+# ARTIFACTS_DIR moves the prover artifacts, for checkouts without the web app.
+#
 # Re-run it after any change to circuits/ and commit what it produces.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+artifacts="${ARTIFACTS_DIR:-$root/web/public/circuits}"
 cd "$root/circuits"
 
 nargo_version="$(nargo --version | head -1 | sed 's/nargo version = //')"
@@ -19,8 +22,8 @@ echo "nargo $nargo_version · bb $bb_version"
 
 nargo compile
 
-mkdir -p "$root/contracts/src/verifiers" "${ARTIFACTS_DIR:-$root/web/public/circuits}"
-manifest="$root/web/public/circuits/manifest.json"
+mkdir -p "$root/contracts/src/verifiers" "$artifacts"
+manifest="$artifacts/manifest.json"
 echo "{" > "$manifest.tmp"
 
 first=1
@@ -45,9 +48,9 @@ for circuit in spend settle; do
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); [d.pop(k,None) for k in ("debug_symbols","file_map")]; json.dump(d,open(sys.argv[2],"w"),separators=(",",":"))' \
     "target/$circuit.json" "target/$circuit.public.json"
   hash="$(shasum -a 256 "target/$circuit.public.json" | cut -c1-12)"
-  cp "target/$circuit.public.json" "$root/web/public/circuits/$circuit.$hash.json"
+  cp "target/$circuit.public.json" "$artifacts/$circuit.$hash.json"
   # Drop stale copies of the same circuit.
-  find "${ARTIFACTS_DIR:-$root/web/public/circuits}" -name "$circuit.*.json" ! -name "$circuit.$hash.json" -delete
+  find "$artifacts" -name "$circuit.*.json" ! -name "$circuit.$hash.json" -delete
 
   [ $first -eq 0 ] && echo "," >> "$manifest.tmp"
   first=0

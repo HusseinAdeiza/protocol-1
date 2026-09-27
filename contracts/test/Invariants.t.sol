@@ -25,6 +25,7 @@ contract PoolHandler is Test {
     uint256 public commitmentNonce = 1_000_000;
 
     bytes32[] public usedNullifiers;
+    bytes32[] public roots;
 
     constructor(BacklitPool pool_, TestnetWETH weth_, address guardian_) {
         pool = pool_;
@@ -46,6 +47,7 @@ contract PoolHandler is Test {
             hex"01"
         );
         depositedTotal += amount;
+        roots.push(pool.currentRoot());
     }
 
     function spend(uint256 withdrawAmount, bool unwrap) public {
@@ -72,6 +74,7 @@ contract PoolHandler is Test {
         usedNullifiers.push(a);
         usedNullifiers.push(b);
         withdrawnTotal += withdrawAmount;
+        roots.push(pool.currentRoot());
     }
 
     /// @dev Tries to spend a nullifier that has already been published.
@@ -111,6 +114,10 @@ contract PoolHandler is Test {
     function usedNullifierCount() external view returns (uint256) {
         return usedNullifiers.length;
     }
+
+    function rootCount() external view returns (uint256) {
+        return roots.length;
+    }
 }
 
 contract PoolInvariants is Test {
@@ -146,11 +153,18 @@ contract PoolInvariants is Test {
         }
     }
 
-    /// @notice The tree only ever grows, and every root it produced stays
-    /// citable for the length of the window.
+    /// @notice The tree only ever grows, and the root it has now is citable.
     function invariant_theCurrentRootIsAlwaysKnown() public view {
         if (pool.leafCount() == 0) return;
         assertTrue(pool.isKnownRoot(pool.currentRoot()));
+    }
+
+    /// @notice No root the tree has had is ever forgotten.
+    function invariant_everyRootStaysKnown() public view {
+        uint256 count = handler.rootCount();
+        for (uint256 i = 0; i < count; i++) {
+            assertTrue(pool.isKnownRoot(handler.roots(i)), "a root was forgotten");
+        }
     }
 
     /// @notice The cap never falls, whatever the guardian does.

@@ -33,19 +33,6 @@ export const backlitPoolAbi = [
   },
   {
     "type": "function",
-    "name": "ROOT_HISTORY",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "capWei",
     "inputs": [],
     "outputs": [
@@ -213,19 +200,6 @@ export const backlitPoolAbi = [
   },
   {
     "type": "function",
-    "name": "knownRoots",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "out",
-        "type": "bytes32[]",
-        "internalType": "bytes32[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "leafCount",
     "inputs": [],
     "outputs": [
@@ -343,6 +317,35 @@ export const backlitPoolAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "spendBinding",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "unwrap",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "payloads",
+        "type": "bytes[2]",
+        "internalType": "bytes[2]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -571,6 +574,11 @@ export const backlitPoolAbi = [
   {
     "type": "error",
     "name": "BadProof",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BadRecipient",
     "inputs": []
   },
   {
@@ -821,6 +829,26 @@ export const backlitMarketAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "feesOwed",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "forwardFees",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1140,40 +1168,6 @@ export const backlitMarketAbi = [
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "onERC721Received",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes4",
-        "internalType": "bytes4"
-      }
-    ],
-    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -1595,6 +1589,30 @@ export const backlitMarketAbi = [
   },
   {
     "type": "function",
+    "name": "settleBinding",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "payloads",
+        "type": "bytes[3]",
+        "internalType": "bytes[3]"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "pure"
+  },
+  {
+    "type": "function",
     "name": "settleVerifier",
     "inputs": [],
     "outputs": [
@@ -1640,6 +1658,25 @@ export const backlitMarketAbi = [
   },
   {
     "type": "event",
+    "name": "FeeDeferred",
+    "inputs": [
+      {
+        "name": "feeRecipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "FeeRecipientSet",
     "inputs": [
       {
@@ -1657,6 +1694,25 @@ export const backlitMarketAbi = [
     "inputs": [
       {
         "name": "feeWei",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "FeesForwarded",
+    "inputs": [
+      {
+        "name": "feeRecipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -1924,6 +1980,11 @@ export const backlitMarketAbi = [
   {
     "type": "error",
     "name": "NotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotEscrowed",
     "inputs": []
   },
   {
@@ -2529,6 +2590,19 @@ export const testCollectionAbi = [
         "name": "approved",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setBaseURI",
+    "inputs": [
+      {
+        "name": "uri",
+        "type": "string",
+        "internalType": "string"
       }
     ],
     "outputs": [],

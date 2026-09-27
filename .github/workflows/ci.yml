@@ -53,9 +53,10 @@ jobs:
         working-directory: contracts
         run: forge build --sizes
 
+      # A gas change is a reviewed change: regenerate .gas-snapshot and commit it.
       - name: Gas snapshot
         working-directory: contracts
-        run: forge snapshot --check || forge snapshot
+        run: forge snapshot --check
 
   typescript:
     name: TypeScript

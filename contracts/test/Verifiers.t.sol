@@ -41,8 +41,8 @@ contract VerifiersTest is Test {
 
     function test_spendProofRejectsATamperedPublicInput() public {
         (bytes memory proof, bytes32[] memory pub) = _load("spend");
-        // Redirect the withdrawal to somebody else.
-        pub[8] = bytes32(uint256(uint160(address(0xBAD))));
+        // Any other recipient, unwrap flag or payload set moves the binding.
+        pub[8] = bytes32(uint256(pub[8]) ^ 1);
         vm.expectRevert();
         spendVerifier.verify(proof, pub);
     }
@@ -54,9 +54,9 @@ contract VerifiersTest is Test {
         settleVerifier.verify(proof, pub);
     }
 
-    function test_settleProofRejectsAnotherListing() public {
+    function test_settleProofRejectsAnotherBinding() public {
         (bytes memory proof, bytes32[] memory pub) = _load("settle");
-        pub[13] = bytes32(uint256(0x5eee));
+        pub[13] = bytes32(uint256(pub[13]) ^ 1);
         vm.expectRevert();
         settleVerifier.verify(proof, pub);
     }

@@ -19,9 +19,6 @@ contract BacklitPool {
     using InternalLeanIMT for LeanIMTData;
     using Field for bytes32;
 
-    /// @notice How many past roots a proof may cite.
-    uint256 public constant ROOT_HISTORY = 64;
-
     IWETH public immutable weth;
     IVerifier public immutable spendVerifier;
     address public immutable guardian;
@@ -37,14 +34,18 @@ contract BacklitPool {
     uint256 public capWei;
     bool public depositsPaused;
 
-    /// @notice Cumulative deposits. The live balance is `weth.balanceOf(pool)`.
+    /// @notice Cumulative deposits and withdrawals. The cap is measured on
+    /// these rather than on `weth.balanceOf(pool)`, so WETH sent to the pool
+    /// directly cannot use up the cap and block deposits.
     uint256 public totalDeposited;
     uint256 public totalWithdrawn;
 
     LeanIMTData private tree;
-    bytes32[ROOT_HISTORY] private roots;
-    uint256 private rootCursor;
-    uint256 private rootsWritten;
+
+    /// @dev Every root the tree has had. A proof built against an old root
+    /// stays valid however busy the pool gets; its nullifiers are what stop
+    /// a replay, not the age of the root.
+    mapping(bytes32 root => bool) private rootSeen;
 
     mapping(bytes32 nullifier => bool) public isSpent;
 
@@ -68,6 +69,7 @@ contract BacklitPool {
     error AmountOutOfRange();
     error CapNotRaised();
     error UnknownRoot();
+    error BadRecipient();
     error Reentered();
     error TransferFailed();
     error WithdrawalFailed();
@@ -138,9 +140,9 @@ contract BacklitPool {
     function _deposit(uint256 amount, bytes32 ownerPk, bytes32 salt, bytes calldata payload) private {
         if (depositsPaused) revert DepositsArePaused();
         if (amount == 0 || amount >= MAX_NOTE_AMOUNT) revert AmountOutOfRange();
-        // The funds are already in by the time we get here, so this bounds
-        // what the pool holds rather than what any one deposit adds.
-        if (weth.balanceOf(address(this)) > capWei) revert CapExceeded();
+        // Net value held against notes, after this deposit. Written without a
+        // subtraction so it cannot underflow.
+        if (totalDeposited + amount > capWei + totalWithdrawn) revert CapExceeded();
 
         bytes32 commitment = bytes32(
             PoseidonT5.hash(
@@ -163,6 +165,11 @@ contract BacklitPool {
     {
         if (!isKnownRoot(p.root)) revert UnknownRoot();
         if (p.withdrawAmount >= MAX_NOTE_AMOUNT) revert AmountOutOfRange();
+        // Paying to zero burns the value; paying to the pool strands it
+        // outside every note.
+        if (p.withdrawAmount > 0 && (p.recipient == address(0) || p.recipient == address(this))) {
+            revert BadRecipient();
+        }
 
         bytes32[] memory publicInputs = new bytes32[](9);
         publicInputs[0] = poolId;
@@ -173,7 +180,7 @@ contract BacklitPool {
         publicInputs[5] = p.outputs[0].check();
         publicInputs[6] = p.outputs[1].check();
         publicInputs[7] = bytes32(p.withdrawAmount);
-        publicInputs[8] = Field.fromAddress(p.recipient);
+        publicInputs[8] = spendBinding(p.recipient, p.unwrap, payloads);
 
         if (!spendVerifier.verify(proof, publicInputs)) revert BadProof();
 
@@ -225,27 +232,21 @@ contract BacklitPool {
         return tree.depth;
     }
 
-    /// @notice True for any of the last `ROOT_HISTORY` roots. Walks backwards
-    /// from the newest, so a fresh proof costs one read.
+    /// @notice True for any root the tree has ever had.
     function isKnownRoot(bytes32 root) public view returns (bool) {
-        if (root == bytes32(0)) return false;
-        uint256 checks = rootsWritten < ROOT_HISTORY ? rootsWritten : ROOT_HISTORY;
-        uint256 cursor = rootCursor;
-        for (uint256 i = 0; i < checks; i++) {
-            cursor = cursor == 0 ? ROOT_HISTORY - 1 : cursor - 1;
-            if (roots[cursor] == root) return true;
-        }
-        return false;
+        return rootSeen[root];
     }
 
-    function knownRoots() external view returns (bytes32[] memory out) {
-        uint256 checks = rootsWritten < ROOT_HISTORY ? rootsWritten : ROOT_HISTORY;
-        out = new bytes32[](checks);
-        uint256 cursor = rootCursor;
-        for (uint256 i = 0; i < checks; i++) {
-            cursor = cursor == 0 ? ROOT_HISTORY - 1 : cursor - 1;
-            out[i] = roots[cursor];
-        }
+    /// @notice What the spend circuit's `recipient` input is set to. The
+    /// circuit only binds that slot, so hashing the payout terms and the
+    /// payloads into it ties a proof to this exact call: nobody can replay it
+    /// with the unwrap flag flipped or with payloads the owners cannot read.
+    function spendBinding(address recipient, bool unwrap, bytes[2] calldata payloads)
+        public
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(recipient, unwrap, keccak256(abi.encode(payloads)))).reduce();
     }
 
     // -------------------------------------------------------------- guardian
@@ -268,12 +269,7 @@ contract BacklitPool {
 
     function _insert(bytes32 commitment, bytes calldata payload) private returns (uint256 leafIndex) {
         leafIndex = tree.size;
-        bytes32 root = bytes32(tree._insert(uint256(commitment.check())));
-        roots[rootCursor] = root;
-        rootCursor = (rootCursor + 1) % ROOT_HISTORY;
-        unchecked {
-            rootsWritten++;
-        }
+        rootSeen[bytes32(tree._insert(uint256(commitment.check())))] = true;
         emit NoteCreated(leafIndex, commitment, payload);
     }
 

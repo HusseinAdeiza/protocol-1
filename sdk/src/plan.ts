@@ -1,8 +1,17 @@
+import {settleBinding, spendBinding} from "./binding.js";
 import {settleCall, spendCall, type CircuitCall} from "./circuits.js";
 import {randomFieldElement, sealNote} from "./envelope.js";
 import {MAX_NOTE_AMOUNT, type Hex} from "./field.js";
 import type {BacklitKeys} from "./keys.js";
-import {noteCommitment, noteNullifier, priceCommitment, royaltyFor, type Note, type OwnedNote} from "./notes.js";
+import {
+  noteCommitment,
+  noteNullifier,
+  priceCommitment,
+  royaltyFor,
+  sellerSalt,
+  type Note,
+  type OwnedNote,
+} from "./notes.js";
 import {NoteTree, type MembershipProof} from "./tree.js";
 
 /** Where a new note is going: whose it is, and who can read it. */
@@ -24,6 +33,7 @@ export interface SpendPlan {
   outputs: [PlannedNote, PlannedNote];
   withdrawAmount: bigint;
   recipient: Hex;
+  unwrap: boolean;
   /** The notes this plan consumes, so the wallet can mark them pending. */
   spent: OwnedNote[];
 }
@@ -98,8 +108,8 @@ function inputsFor(
   return {entries, nullifiers: [nullifiers[0]!, nullifiers[1]!], total};
 }
 
-function mint(asset: Hex, amount: bigint, to: Payee): PlannedNote {
-  const note: Note = {asset, amount, ownerPk: to.ownerPk, salt: randomFieldElement()};
+function mint(asset: Hex, amount: bigint, to: Payee, salt = randomFieldElement()): PlannedNote {
+  const note: Note = {asset, amount, ownerPk: to.ownerPk, salt};
   return {
     note,
     commitment: noteCommitment(note),
@@ -116,6 +126,8 @@ export interface SpendRequest {
   /** Value leaving the pool as plain WETH or ETH. */
   withdrawAmount?: bigint;
   recipient?: Hex;
+  /** Pay the withdrawal out as ETH rather than WETH. The proof commits to this. */
+  unwrap?: boolean;
   /** Value staying in the pool as somebody else's note. */
   sendAmount?: bigint;
   sendTo?: Payee;
@@ -130,9 +142,11 @@ export function planSpend(request: SpendRequest): SpendPlan {
   const withdrawAmount = request.withdrawAmount ?? 0n;
   const sendAmount = request.sendAmount ?? 0n;
   const recipient = request.recipient ?? "0x0000000000000000000000000000000000000000";
+  const unwrap = request.unwrap ?? false;
 
   if (sendAmount > 0n && !request.sendTo) throw new Error("no recipient key for the note being sent");
   if (withdrawAmount >= MAX_NOTE_AMOUNT) throw new Error("withdrawal out of range");
+  if (withdrawAmount > 0n && BigInt(recipient) === 0n) throw new Error("a withdrawal needs a recipient");
 
   const {entries, nullifiers, total} = inputsFor(keys, asset, tree, notes);
   if (total < withdrawAmount + sendAmount) throw new Error("not enough in these notes");
@@ -151,7 +165,7 @@ export function planSpend(request: SpendRequest): SpendPlan {
     outputCommitments: [sent.commitment, change.commitment],
     nullifiers,
     withdrawAmount,
-    recipient,
+    binding: spendBinding(recipient, unwrap, [sent.payload, change.payload]),
   });
 
   return {
@@ -161,6 +175,7 @@ export function planSpend(request: SpendRequest): SpendPlan {
     outputs: [sent, change],
     withdrawAmount,
     recipient,
+    unwrap,
     spent: notes,
   };
 }
@@ -174,7 +189,8 @@ export interface SettleRequest {
   price: bigint;
   priceBlinding: bigint;
   royaltyBps: number;
-  listingId: bigint;
+  /** The offer being settled. The proof is valid for this offer only. */
+  offerId: Hex;
   seller: Payee;
   creator: Payee;
 }
@@ -193,7 +209,9 @@ export function planSettle(request: SettleRequest): SettlePlan {
   const royaltyAmount = royaltyFor(price, BigInt(royaltyBps));
   const sellerAmount = price - royaltyAmount;
 
-  const seller = mint(asset, sellerAmount, request.seller);
+  // The circuit fixes the seller's salt, so the seller can rebuild this note
+  // from the offer with `sellerNoteFromOffer` whatever the payload says.
+  const seller = mint(asset, sellerAmount, request.seller, sellerSalt(request.priceBlinding));
   const creator = mint(asset, royaltyAmount, request.creator);
   const change = mint(asset, total - price, {ownerPk: keys.ownerPk, viewingPk: keys.viewingPk});
 
@@ -212,11 +230,10 @@ export function planSettle(request: SettleRequest): SettlePlan {
     sellerPk: request.seller.ownerPk,
     creatorPk: request.creator.ownerPk,
     buyerPk: keys.ownerPk,
-    listingId: request.listingId,
+    binding: settleBinding(request.offerId, [seller.payload, creator.payload, change.payload]),
     price,
     priceBlinding: request.priceBlinding,
     royaltyAmount,
-    sellerSalt: seller.note.salt,
     creatorSalt: creator.note.salt,
     changeSalt: change.note.salt,
     sellerAmount,

@@ -121,7 +121,6 @@ contract BacklitPool {
         emit MarketSet(market_);
     }
 
-    // ---------------------------------------------------------------- deposits
 
     /// @notice Wraps ETH and turns it into a note owned by `ownerPk`.
     function depositETH(bytes32 ownerPk, bytes32 salt, bytes calldata payload) external payable {
@@ -155,7 +154,6 @@ contract BacklitPool {
         emit Deposited(msg.sender, amount, leafIndex);
     }
 
-    // ------------------------------------------------------------------ spends
 
     /// @notice Spends two notes into two notes, optionally paying part of the
     /// value out to `recipient`. This is transfer, consolidation and withdrawal.
@@ -218,7 +216,6 @@ contract BacklitPool {
         }
     }
 
-    // ------------------------------------------------------------------- views
 
     function currentRoot() external view returns (bytes32) {
         return bytes32(tree._root());
@@ -249,7 +246,6 @@ contract BacklitPool {
         return keccak256(abi.encode(recipient, unwrap, keccak256(abi.encode(payloads)))).reduce();
     }
 
-    // -------------------------------------------------------------- guardian
 
     /// @notice Raises the deposit cap. It can only go up.
     function raiseCap(uint256 newCapWei) external onlyGuardian {
@@ -265,7 +261,6 @@ contract BacklitPool {
         emit DepositsPaused(paused);
     }
 
-    // -------------------------------------------------------------- internals
 
     function _insert(bytes32 commitment, bytes calldata payload) private returns (uint256 leafIndex) {
         leafIndex = tree.size;

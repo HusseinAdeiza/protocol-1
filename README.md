@@ -4,9 +4,9 @@ The contracts, circuits and client cryptography behind [backlit.ink](https://bac
 an NFT market on Robinhood Chain where the sale price stays private and the
 creator's royalty is paid in the same transaction.
 
-Everything a user has to trust is here. The contracts are immutable, the
-verifiers are generated from these circuits, and the SDK is the code the app
-runs in your browser to derive keys and encrypt notes.
+The contracts, circuits and SDK are all here. The contracts cannot be
+upgraded, the verifiers are generated from these circuits, and the SDK is the
+code the app uses to derive keys and encrypt notes in your browser.
 
 ## What is private
 
@@ -58,13 +58,21 @@ pnpm install
 pnpm --filter @backlit/sdk test  # crypto, notes, parity with the contracts
 ```
 
+Run each command from the directory shown; Foundry and Nargo look for their
+project file in the current directory.
+
+Deployed addresses, with the block, commit and toolchain that produced them,
+are in `contracts/deployments/<chainId>.json`.
+
 `circuits/scripts/build.sh` recompiles the circuits and regenerates the
 Solidity verifiers. Run it after any circuit change and commit the result.
 
-## Guardrails
+## Admin controls
 
 The contracts have no proxy and no upgrade path. A guardian can raise the
-deposit cap and pause new deposits. Nothing can pause a withdrawal.
+deposit cap and pause new deposits. Nothing in these contracts can pause a
+withdrawal. Balances are held in the chain's WETH contract, which has its own
+upgrade administrator.
 
 ## Security
 

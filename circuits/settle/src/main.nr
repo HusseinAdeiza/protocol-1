@@ -1,5 +1,5 @@
-//! Settle: the buyer spends two notes and creates three — the seller's share,
-//! the creator's royalty and their own change — proving they add up to the
+//! Settle: the buyer spends two notes and creates three (the seller's share,
+//! the creator's royalty and their own change), proving they add up to the
 //! price the seller accepted and that the royalty is exactly the collection's
 //! basis points of it, rounded up.
 //!

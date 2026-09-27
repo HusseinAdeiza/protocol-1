@@ -199,7 +199,6 @@ contract BacklitMarket {
         emit FeeWeiSet(feeWei_);
     }
 
-    // -------------------------------------------------------------------- keys
 
     /// @notice Publishes the caller's Backlit keys so others can address notes
     /// and encrypted offers to them. Re-registering replaces the old pair.
@@ -218,11 +217,10 @@ contract BacklitMarket {
         return _keys[wallet].ownerPk != bytes32(0);
     }
 
-    // ---------------------------------------------------------------- listings
 
     /// @notice Escrows an NFT and opens it to encrypted offers.
     /// @dev The collection has to answer ERC-2981, and whoever it names as the
-    /// royalty receiver has to have registered keys — otherwise there is no
+    /// royalty receiver has to have registered keys; otherwise there is no
     /// note to pay the royalty into.
     function list(address collection, uint256 tokenId)
         external
@@ -272,7 +270,6 @@ contract BacklitMarket {
         if (bps > 0 && receiver == address(0)) revert RoyaltyOutOfRange();
     }
 
-    // ------------------------------------------------------------------ offers
 
     /// @notice Makes an offer at a price only the seller can read.
     /// @param priceCommitment Poseidon commitment to the price and a blinding factor.
@@ -358,7 +355,6 @@ contract BacklitMarket {
         o.cancelled = true;
     }
 
-    // ---------------------------------------------------------------- settling
 
     /// @notice Settles an accepted offer. Anyone may submit it: the proof, not
     /// the sender, is what authorises the spend.
@@ -503,7 +499,6 @@ contract BacklitMarket {
         }
     }
 
-    // ---------------------------------------------------------------- guardian
 
     /// @notice Sends deferred fees to the current fee recipient. Anyone may
     /// call it; the money can only go to `feeRecipient`.

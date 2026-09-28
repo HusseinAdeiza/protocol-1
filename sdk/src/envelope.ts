@@ -99,8 +99,6 @@ function open(viewingSk: Uint8Array, info: string, payload: Uint8Array): Uint8Ar
   }
 }
 
-// ------------------------------------------------------------------- notes
-
 /** version(1) ‖ asset(20) ‖ amount(12, big-endian) ‖ salt(32) */
 export function sealNote(recipientViewingPk: Uint8Array, note: NotePlaintext): Hex {
   const body = new Uint8Array(65);
@@ -125,22 +123,20 @@ export function openNote(viewingSk: Uint8Array, payload: Hex): NotePlaintext | n
   };
 }
 
-// ------------------------------------------------------------------ offers
-
-/** A fresh 32-byte value reduced into the field, for salts and blinding factors. */
+/** A random field element for salts and blinding factors. */
 export function randomFieldElement(): bigint {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
-  // Clearing the top byte keeps the value well inside the field with no bias
-  // worth arguing about.
+  // A cleared top byte leaves 248 uniform bits, below the modulus without any
+  // reduction and so without bias.
   bytes[0] = 0;
   return bytesToBigInt(bytes);
 }
 
 /**
  * An offer's opening is encrypted to the seller, and the buyer needs it back
- * at settlement. Rather than store it, the buyer derives the ephemeral key and
- * the blinding from their spending key, the listing and a random 16-byte `r`
+ * at settlement. The buyer stores nothing: the ephemeral key and the blinding
+ * are derived from their spending key, the listing and a random 16-byte `r`
  * carried in the clear, so the payload in the event log is readable by both
  * sides and by nobody else. `r` is random rather than a counter, so two offers
  * never share a key and reopening needs no search.

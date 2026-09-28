@@ -1,0 +1,23 @@
+{
+  "block": 74963833,
+  "capWei": 5000000000000000000,
+  "chainId": 4663,
+  "collection": "0x0000000000000000000000000000000000000000",
+  "deployer": "0x4eA9d905eb88bB7944EdF2442578DFE7AD8831Be",
+  "feeRecipient": "0xe169ee18E87337bD1099295cFf41C2868e069C69",
+  "feeWei": 200000000000000,
+  "guardian": "0x94E34Bb413008cE2783F345B25d829CeEFeb45a3",
+  "market": "0x50534f8de6ECc5971c480a93a7a9A6Fd999a74Ee",
+  "pool": "0x3e56C8b1c68659fadAd0d0809Da55A1f126f57a2",
+  "settleVerifier": "0x86688Bf21B60A956F5672b77e0f06B75Bee4B262",
+  "spendVerifier": "0x5e2575E4fe8e0b295282739C1aBD28ced6F881a2",
+  "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+  "toolchain": {
+    "nargo": "1.0.0-beta.22",
+    "bb": "5.0.0-nightly.20260522",
+    "verifierTarget": "evm",
+    "scheme": "ultra_honk"
+  },
+  "commit": "92b5347d396a38edd9ff35336733ca4c6ef321e6",
+  "timestamp": "2026-09-28T17:06:47Z"
+}

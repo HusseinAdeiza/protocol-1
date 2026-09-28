@@ -7,8 +7,8 @@
 
 use poseidon::poseidon::bn254::{hash_2, hash_4};
 
-/// Deepest tree the circuits accept. The pool caps its own tree at the same
-/// number, so a proof can always cite any leaf the pool holds.
+/// Deepest tree the circuits accept: 2^32 leaves. The pool's LeanIMT has no
+/// limit of its own, but it would take billions of notes to reach it.
 pub global MAX_DEPTH: u32 = 32;
 
 /// Note amounts are uint96 on chain, so 2^96 is the exclusive upper bound.
@@ -21,7 +21,7 @@ pub global BPS_DENOM: u128 = 10000;
 /// seller's note salt from every other use of the price blinding.
 pub global SELLER_SALT_TAG: Field = 0x6261636b6c69742f73656c6c65722d73616c74;
 
-/// A LeanIMT membership path. `depth` is the number of levels actually walked;
+/// A LeanIMT membership path. `depth` is the number of levels walked;
 /// siblings past that point are ignored, which is how a LeanIMT proof shrinks
 /// for a tree that is not yet full.
 pub struct MerkleProof {
@@ -65,9 +65,9 @@ pub fn lean_imt_root(leaf: Field, proof: MerkleProof) -> Field {
 
 /// Consumes one input note and returns its nullifier.
 ///
-/// A zero note (amount 0) skips the membership check. That is what lets a
-/// single real note be spent through the fixed two-input shape; it can create
-/// no value, since its amount is zero everywhere it is used.
+/// A zero note (amount 0) skips the membership check, which lets a single
+/// real note be spent through the fixed two-input shape. It can create no
+/// value, since its amount is zero everywhere it is used.
 pub fn spend_note(
     asset: Field,
     amount: u128,
@@ -88,14 +88,14 @@ pub fn spend_note(
 /// Keeps a public input that carries no constraint of its own inside the
 /// proof, so a proof cannot be replayed with a different value in that slot.
 /// The contracts fill the slot with a hash of the call's context (offer,
-/// recipient, payloads), which is what ties a proof to one call. The hash
-/// cannot be optimised away because its output is asserted.
+/// recipient, payloads), which ties a proof to one call. The hash cannot be
+/// optimised away because its output is asserted.
 pub fn bind(a: Field, b: Field) {
     assert(hash_2([a, b]) != 0);
 }
 
-/// The one hash the whole system agrees on, re-exported so the circuits do not
-/// each need their own dependency on the Poseidon library.
+/// Two-input Poseidon, re-exported so the circuits need no Poseidon dependency
+/// of their own.
 pub fn hash2(a: Field, b: Field) -> Field {
     hash_2([a, b])
 }

@@ -33,7 +33,7 @@ export const localChain = defineChain({
 export const chains = [robinhood, robinhoodTestnet, localChain] as const;
 
 export const WETH_ADDRESS: Record<number, `0x${string}`> = {
-  4663: "0x0bd7d308F8e1639FAb988df18a8011f41eaCad73",
+  4663: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
 };
 
 export function explorerFor(chainId: number): string {

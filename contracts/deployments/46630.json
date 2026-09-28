@@ -1,23 +1,23 @@
 {
-  "block": 125298295,
-  "capWei": "20000000000000000000",
+  "block": 125790416,
+  "capWei": 5000000000000000000,
   "chainId": 46630,
-  "collection": "0x8458c92843d47C976C9f46E7A7C8ff2E9Bc5a2e2",
+  "collection": "0xBAbC5f7Fd36554C43B9b453909E7F3b228eB2cde",
   "deployer": "0x4eA9d905eb88bB7944EdF2442578DFE7AD8831Be",
-  "feeRecipient": "0x4eA9d905eb88bB7944EdF2442578DFE7AD8831Be",
+  "feeRecipient": "0xe169ee18E87337bD1099295cFf41C2868e069C69",
   "feeWei": 200000000000000,
-  "guardian": "0xaE9f6C7BdEacE5e1D2198693ed0AE13B73112e21",
-  "market": "0x56030F1dF9328D03700300640501cCE18D5e3625",
-  "pool": "0xb6adE1e83D302ABc4B702F2DE2c6266022e89485",
-  "settleVerifier": "0x55cfAcF105cD17E34B63e7501dFbeF248d338fFd",
-  "spendVerifier": "0x72c78395C2699D963fB539e0078210869a42d151",
-  "weth": "0x427846A73E84cbd56713211B11D876786cB8C8E7",
+  "guardian": "0x94E34Bb413008cE2783F345B25d829CeEFeb45a3",
+  "market": "0x876Df6bBC579cE910Ec53AE154619D04bD69acf4",
+  "pool": "0x0a34cd7963EE9ba6393641418C7C9aFfc11C55Ea",
+  "settleVerifier": "0xDA2884863c9F1fE71a60D69275131C6790a8FA5C",
+  "spendVerifier": "0xBE1086a5aD23c8BA746DD299b738B6CE993Fa7Bf",
+  "weth": "0xe6ae1A9F6e31f05829DD7B6511aB462D50570EF6",
   "toolchain": {
     "nargo": "1.0.0-beta.22",
     "bb": "5.0.0-nightly.20260522",
     "verifierTarget": "evm",
     "scheme": "ultra_honk"
   },
-  "commit": "481598ede8eb1aca82307ccee654de322399bc57",
-  "timestamp": "2026-09-27T18:02:16Z"
+  "commit": "bb5703e8620918e2694d035a856d710a89f7a1a3",
+  "timestamp": "2026-09-28T16:46:15Z"
 }

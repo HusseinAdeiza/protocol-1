@@ -33,6 +33,19 @@ export const backlitPoolAbi = [
   },
   {
     "type": "function",
+    "name": "MAX_PAYLOAD_BYTES",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "capWei",
     "inputs": [],
     "outputs": [
@@ -643,6 +656,11 @@ export const backlitPoolAbi = [
   },
   {
     "type": "error",
+    "name": "PayloadTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "Reentered",
     "inputs": []
   },
@@ -728,7 +746,33 @@ export const backlitMarketAbi = [
   },
   {
     "type": "function",
+    "name": "FEE_GAS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MAX_FEE_WEI",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MAX_PAYLOAD_BYTES",
     "inputs": [],
     "outputs": [
       {
@@ -747,6 +791,16 @@ export const backlitMarketAbi = [
         "name": "offerId",
         "type": "bytes32",
         "internalType": "bytes32"
+      },
+      {
+        "name": "priceCommitment",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "maxRoyaltyBps",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -1104,6 +1158,11 @@ export const backlitMarketAbi = [
             "name": "cancelled",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "acceptedRoyaltyBps",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
@@ -1165,6 +1224,11 @@ export const backlitMarketAbi = [
         "name": "cancelled",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "acceptedRoyaltyBps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -1280,11 +1344,6 @@ export const backlitMarketAbi = [
             "internalType": "bytes32"
           },
           {
-            "name": "blockNumber",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "timestamp",
             "type": "uint256",
             "internalType": "uint256"
@@ -1359,11 +1418,6 @@ export const backlitMarketAbi = [
         "name": "creatorCommitment",
         "type": "bytes32",
         "internalType": "bytes32"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint256",
-        "internalType": "uint256"
       },
       {
         "name": "timestamp",
@@ -1443,11 +1497,6 @@ export const backlitMarketAbi = [
             "name": "creatorCommitment",
             "type": "bytes32",
             "internalType": "bytes32"
-          },
-          {
-            "name": "blockNumber",
-            "type": "uint256",
-            "internalType": "uint256"
           },
           {
             "name": "timestamp",
@@ -1949,6 +1998,11 @@ export const backlitMarketAbi = [
   },
   {
     "type": "error",
+    "name": "CommitmentMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "FeeMismatch",
     "inputs": []
   },
@@ -1980,6 +2034,11 @@ export const backlitMarketAbi = [
   {
     "type": "error",
     "name": "NotAccepted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotDelivered",
     "inputs": []
   },
   {
@@ -2024,12 +2083,22 @@ export const backlitMarketAbi = [
   },
   {
     "type": "error",
+    "name": "PayloadTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "Reentered",
     "inputs": []
   },
   {
     "type": "error",
     "name": "RoyaltyOutOfRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RoyaltyRaised",
     "inputs": []
   },
   {

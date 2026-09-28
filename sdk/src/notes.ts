@@ -75,9 +75,9 @@ export function sellerNoteFromOffer(
 }
 
 /**
- * True when a decrypted note really is the leaf it was published with. A
- * payload is not covered by the proof, so a sender can attach one that opens
- * to the wrong amount or salt; a wallet must drop any note that fails this.
+ * True when a decrypted note is the leaf it was published with. A payload is
+ * not covered by the proof, so a sender can attach one that opens to the wrong
+ * amount or salt; a wallet must drop any note that fails this.
  */
 export function verifyNote(note: Note, commitment: bigint | Hex, asset: Hex): boolean {
   if (note.asset.toLowerCase() !== asset.toLowerCase()) return false;

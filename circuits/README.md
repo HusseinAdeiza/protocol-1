@@ -2,10 +2,10 @@
 
 Two Noir circuits and the note scheme they share.
 
-| | inputs | outputs | public inputs | gates |
+| | Inputs | Outputs | Public inputs | Gates |
 | --- | --- | --- | --- | --- |
 | `spend` | 2 notes | 2 notes, optional withdrawal | 9 | 71,505 |
-| `settle` | 2 notes | 3 notes (seller, creator, change) | 14 | 73,739 |
+| `settle` | 2 notes | 3 notes (seller, creator, change) | 14 | 74,661 |
 
 ## Toolchain
 
@@ -42,7 +42,7 @@ served.
 nargo test
 ```
 
-Thirty-four tests. The library covers the hashes and the Merkle walk; each
+Thirty-seven tests. The library covers the hashes and the Merkle walk; each
 circuit covers its honest path and every tamper case: a wrong root, a wrong
 nullifier, the same note twice, value that does not balance, a royalty one wei
 short and one wei over, a swapped rate, a price that does not open its
@@ -60,8 +60,8 @@ priceCommit = poseidon2(price, blinding)
 ```
 
 `amount < 2^96`. A zero note is a valid input to any spend and skips the
-membership check, which is what lets a single real note be spent through the
-fixed two-input shape.
+membership check, which lets a single real note be spent through the fixed
+two-input shape.
 
 Poseidon is the circomlib-compatible BN254 one, from `noir-lang/poseidon`.
 `circuits/tests/vectors/vectors.json` holds Noir, Solidity and JavaScript to

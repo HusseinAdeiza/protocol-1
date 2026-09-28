@@ -1,3 +1,4 @@
+import {hashMessage} from "viem";
 import {privateKeyToAccount} from "viem/accounts";
 import {describe, expect, it} from "vitest";
 
@@ -9,9 +10,12 @@ import {
   importBackup,
   normalizeSignature,
   seedFromSignature,
-  keyDerivationTypedData,
+  keyDerivationMessage,
+  keySite,
+  KEY_SITES,
   keysFromSeed,
   ownerPkFrom,
+  toHex32,
   FR,
   type Hex,
 } from "../src/index.js";
@@ -19,12 +23,50 @@ import {
 const SIGNATURE =
   "0x2c1b9c7e9a5e2a4f9a72c1e33f0b6d59f1f0b8ab4a4f0d8f9d0c1b2a3948576605c4e3d2a1b0f9e8d7c6b5a4938271605f4e3d2c1b0a9988776655443322110c1b" as Hex;
 
+const PINNED_DIGEST = "0x2502b4861d467fd195497766c7c8bae4d1bad386c28d6b1e3d8ec4568db0726b";
+const PINNED_OWNER_PK = "0x2faf4a8e0b1786c1ae8c0bd79b161cdd05796e91845dcab70cfb62b2ceae08c9";
+const PINNED_VIEWING_PK = "0x4dbbda348212d006a76485b3a7764fc3629435f0bf51f521d76334efb5854d13";
+
 describe("key derivation", () => {
-  it("binds the signed message to the wallet and chain", () => {
-    const typed = keyDerivationTypedData(4663, "0x1111111111111111111111111111111111111111");
-    expect(typed.domain).toEqual({name: "Backlit", version: "1", chainId: 4663});
-    expect(typed.message.purpose).toBe("backlit-keys-v1");
-    expect(typed.primaryType).toBe("KeyDerivation");
+  it("asks the wallet to sign in to the site, and says what the signature is", () => {
+    const message = keyDerivationMessage(keySite("https://backlit.ink"), 4663, "0x1111111111111111111111111111111111111111");
+    expect(message).toBe(
+      [
+        "backlit.ink wants you to sign in with your Ethereum account:",
+        "0x1111111111111111111111111111111111111111",
+        "",
+        "This signature is your Backlit key. Anyone who has it can spend your Backlit balance.",
+        "",
+        "URI: https://backlit.ink",
+        "Version: 1",
+        "Chain ID: 4663",
+        "Nonce: backlitkeys2",
+        "Issued At: 2026-09-28T00:00:00.000Z",
+      ].join("\n"),
+    );
+  });
+
+  it("writes the wallet checksummed, whatever case it is given in", () => {
+    const lower = "0x4ea9d905eb88bb7944edf2442578dfe7ad8831be";
+    const message = keyDerivationMessage(keySite(KEY_SITES[4663]!), 4663, lower);
+    expect(message.split("\n")[1]).toBe("0x4eA9d905eb88bB7944EdF2442578DFE7AD8831Be");
+  });
+
+  it("names each chain's own site, so keys differ between them", () => {
+    expect(keySite(KEY_SITES[4663]!)).toEqual({domain: "backlit.ink", uri: "https://backlit.ink"});
+    expect(keySite(KEY_SITES[46630]!)).toEqual({domain: "testnet.backlit.ink", uri: "https://testnet.backlit.ink"});
+    expect(keySite(KEY_SITES[31337]!)).toEqual({domain: "localhost:3080", uri: "http://localhost:3080"});
+  });
+
+  // Every registered key hangs off this message. If this test fails, every
+  // user's keys have moved.
+  it("keeps the message a wallet signs, and the keys it gives, fixed", async () => {
+    const account = privateKeyToAccount(`0x${"42".repeat(32)}`);
+    const message = keyDerivationMessage(keySite(KEY_SITES[4663]!), 4663, account.address);
+    expect(hashMessage(message)).toBe(PINNED_DIGEST);
+    const keys = deriveKeys(await account.signMessage({message}));
+    expect(toHex32(keys.ownerPk)).toBe(PINNED_OWNER_PK);
+    expect(bytesToHex(keys.viewingPk)).toBe(PINNED_VIEWING_PK);
   });
 
   it("gives the same keys for the same signature", () => {

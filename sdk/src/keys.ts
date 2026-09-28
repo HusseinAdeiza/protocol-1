@@ -4,6 +4,8 @@ import {utf8ToBytes} from "@noble/hashes/utils.js";
 import {keccak_256} from "@noble/hashes/sha3.js";
 import {x25519} from "@noble/curves/ed25519.js";
 
+import {getAddress} from "viem";
+
 import {bigIntToBytes, bytesToBigInt, bytesToHex, FR, hexToBytes, type Hex} from "./field.js";
 import {poseidon2} from "./poseidon.js";
 
@@ -13,8 +15,7 @@ import {poseidon2} from "./poseidon.js";
  *
  * spendingKey   authorises spending. Never leaves the device.
  * ownerPk       public, registered on chain, addresses notes to this owner.
- * viewingSk/Pk  x25519 pair that decrypts note and offer payloads. The secret
- *               half can be exported to a read-only viewer.
+ * viewingSk/Pk  x25519 pair that decrypts note and offer payloads.
  */
 export interface BacklitKeys {
   spendingKey: bigint;
@@ -23,21 +24,47 @@ export interface BacklitKeys {
   viewingPk: Uint8Array;
 }
 
-export const KEY_PURPOSE = "backlit-keys-v1";
+/** What signing the key message hands over, shown in the wallet. */
+export const KEY_STATEMENT =
+  "This signature is your Backlit key. Anyone who has it can spend your Backlit balance.";
 
-/** The EIP-712 payload the wallet signs. Deterministic per wallet and chain. */
-export function keyDerivationTypedData(chainId: number, wallet: Hex) {
-  return {
-    domain: {name: "Backlit", version: "1", chainId},
-    types: {
-      KeyDerivation: [
-        {name: "purpose", type: "string"},
-        {name: "wallet", type: "address"},
-      ],
-    },
-    primaryType: "KeyDerivation" as const,
-    message: {purpose: KEY_PURPOSE, wallet},
-  };
+/** The site each chain's keys are made on. Keys are tied to it. */
+export const KEY_SITES: Readonly<Record<number, string>> = {
+  4663: "https://backlit.ink",
+  46630: "https://testnet.backlit.ink",
+  31337: "http://localhost:3080",
+};
+
+export interface KeySite {
+  domain: string;
+  uri: string;
+}
+
+export function keySite(url: string): KeySite {
+  const parsed = new URL(url);
+  return {domain: parsed.host, uri: parsed.origin};
+}
+
+/**
+ * The message the wallet signs, in Sign-In with Ethereum (EIP-4361) form.
+ * Wallets that understand it compare its domain with the site asking and warn
+ * on any other, which EIP-712 cannot do. The nonce and issue time are fixed on
+ * purpose: the signature has to come out the same every time for the keys to.
+ * Changing any byte of it changes every user's keys.
+ */
+export function keyDerivationMessage(site: KeySite, chainId: number, wallet: Hex): string {
+  return [
+    `${site.domain} wants you to sign in with your Ethereum account:`,
+    getAddress(wallet),
+    "",
+    KEY_STATEMENT,
+    "",
+    `URI: ${site.uri}`,
+    "Version: 1",
+    `Chain ID: ${chainId}`,
+    "Nonce: backlitkeys2",
+    "Issued At: 2026-09-28T00:00:00.000Z",
+  ].join("\n");
 }
 
 const SECP256K1_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
@@ -78,7 +105,7 @@ export function normalizeSignature(signature: Hex): Uint8Array {
   return out;
 }
 
-/** The 32-byte seed every key comes from. This is what a backup stores. */
+/** The 32-byte seed every key comes from, and what a backup stores. */
 export function seedFromSignature(signature: Hex): Uint8Array {
   return keccak_256(normalizeSignature(signature));
 }

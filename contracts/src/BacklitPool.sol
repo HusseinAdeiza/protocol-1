@@ -19,6 +19,11 @@ contract BacklitPool {
     using InternalLeanIMT for LeanIMTData;
     using Field for bytes32;
 
+    /// @notice Ceiling on a note payload. The SDK's are 118 bytes. Every
+    /// wallet downloads every payload to find its notes, so without a cap
+    /// anyone could make that arbitrarily expensive.
+    uint256 public constant MAX_PAYLOAD_BYTES = 160;
+
     IWETH public immutable weth;
     IVerifier public immutable spendVerifier;
     address public immutable guardian;
@@ -42,9 +47,9 @@ contract BacklitPool {
 
     LeanIMTData private tree;
 
-    /// @dev Every root the tree has had. A proof built against an old root
-    /// stays valid however busy the pool gets; its nullifiers are what stop
-    /// a replay, not the age of the root.
+    /// @dev Every root the tree has had, so a proof built against an old root
+    /// stays valid however busy the pool gets. Nullifiers stop replays; roots
+    /// never need to expire.
     mapping(bytes32 root => bool) private rootSeen;
 
     mapping(bytes32 nullifier => bool) public isSpent;
@@ -66,6 +71,7 @@ contract BacklitPool {
     error NotTheDeployer();
     error NotTheGuardian();
     error NotTheMarket();
+    error PayloadTooLarge();
     error AmountOutOfRange();
     error CapNotRaised();
     error UnknownRoot();
@@ -121,7 +127,6 @@ contract BacklitPool {
         emit MarketSet(market_);
     }
 
-
     /// @notice Wraps ETH and turns it into a note owned by `ownerPk`.
     function depositETH(bytes32 ownerPk, bytes32 salt, bytes calldata payload) external payable {
         weth.deposit{value: msg.value}();
@@ -154,7 +159,6 @@ contract BacklitPool {
         emit Deposited(msg.sender, amount, leafIndex);
     }
 
-
     /// @notice Spends two notes into two notes, optionally paying part of the
     /// value out to `recipient`. This is transfer, consolidation and withdrawal.
     function spend(bytes calldata proof, SpendPublic calldata p, bytes[2] calldata payloads)
@@ -163,11 +167,7 @@ contract BacklitPool {
     {
         if (!isKnownRoot(p.root)) revert UnknownRoot();
         if (p.withdrawAmount >= MAX_NOTE_AMOUNT) revert AmountOutOfRange();
-        // Paying to zero burns the value; paying to the pool strands it
-        // outside every note.
-        if (p.withdrawAmount > 0 && (p.recipient == address(0) || p.recipient == address(this))) {
-            revert BadRecipient();
-        }
+        if (p.withdrawAmount > 0 && _unpayable(p.recipient)) revert BadRecipient();
 
         bytes32[] memory publicInputs = new bytes32[](9);
         publicInputs[0] = poolId;
@@ -216,7 +216,6 @@ contract BacklitPool {
         }
     }
 
-
     function currentRoot() external view returns (bytes32) {
         return bytes32(tree._root());
     }
@@ -246,7 +245,6 @@ contract BacklitPool {
         return keccak256(abi.encode(recipient, unwrap, keccak256(abi.encode(payloads)))).reduce();
     }
 
-
     /// @notice Raises the deposit cap. It can only go up.
     function raiseCap(uint256 newCapWei) external onlyGuardian {
         if (newCapWei <= capWei) revert CapNotRaised();
@@ -261,11 +259,21 @@ contract BacklitPool {
         emit DepositsPaused(paused);
     }
 
-
+    /// @dev Every note payload passes through here: deposits, spends and the
+    /// three outputs of a settlement.
     function _insert(bytes32 commitment, bytes calldata payload) private returns (uint256 leafIndex) {
+        if (payload.length > MAX_PAYLOAD_BYTES) revert PayloadTooLarge();
         leafIndex = tree.size;
         rootSeen[bytes32(tree._insert(uint256(commitment.check())))] = true;
         emit NoteCreated(leafIndex, commitment, payload);
+    }
+
+    /// @dev Where a payout would be lost. Zero burns it. The pool would hold
+    /// it outside every note. The WETH contract credits ETH it receives to the
+    /// sender, which is the pool again, and keeps WETH sent to it for good.
+    /// The market has no way to move WETH out.
+    function _unpayable(address to) private view returns (bool) {
+        return to == address(0) || to == address(this) || to == address(weth) || to == market;
     }
 
     function _nullify(bytes32 a, bytes32 b) private {

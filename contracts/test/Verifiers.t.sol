@@ -4,6 +4,8 @@ pragma solidity 0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {stdJson} from "forge-std/StdJson.sol";
 
+import {IVerifier} from "../src/interfaces/IVerifier.sol";
+import {SNARK_SCALAR_FIELD} from "../src/libs/Field.sol";
 import {SpendVerifier} from "../src/verifiers/SpendVerifier.sol";
 import {SettleVerifier} from "../src/verifiers/SettleVerifier.sol";
 
@@ -59,6 +61,54 @@ contract VerifiersTest is Test {
         pub[13] = bytes32(uint256(pub[13]) ^ 1);
         vm.expectRevert();
         settleVerifier.verify(proof, pub);
+    }
+
+    function test_spendVerifierRejectsEveryMutant() public {
+        _rejectsEveryMutant(IVerifier(address(spendVerifier)), "spend");
+    }
+
+    function test_settleVerifierRejectsEveryMutant() public {
+        _rejectsEveryMutant(IVerifier(address(settleVerifier)), "settle");
+    }
+
+    /// @dev Changes every public input twice (one bit, and the same value plus
+    /// the field modulus) and every 32-byte word of the proof once, one at a
+    /// time. Each mutant must fail, by reverting or returning false, and the
+    /// untouched proof must still pass afterwards.
+    function _rejectsEveryMutant(IVerifier verifier, string memory name) internal {
+        vm.pauseGasMetering();
+        (bytes memory proof, bytes32[] memory pub) = _load(name);
+        assertTrue(_accepts(verifier, proof, pub), "untouched proof must verify");
+
+        for (uint256 i = 0; i < pub.length; i++) {
+            bytes32 saved = pub[i];
+            pub[i] = bytes32(uint256(saved) ^ 1);
+            assertFalse(_accepts(verifier, proof, pub), string.concat("input ", vm.toString(i), " flipped"));
+            pub[i] = bytes32(uint256(saved) + SNARK_SCALAR_FIELD);
+            assertFalse(_accepts(verifier, proof, pub), string.concat("input ", vm.toString(i), " plus p"));
+            pub[i] = saved;
+        }
+
+        for (uint256 w = 0; w < proof.length / 32; w++) {
+            uint256 at = w * 32 + 31;
+            bytes1 saved = proof[at];
+            proof[at] = saved ^ 0x01;
+            assertFalse(_accepts(verifier, proof, pub), string.concat("proof word ", vm.toString(w)));
+            proof[at] = saved;
+        }
+        assertTrue(_accepts(verifier, proof, pub), "restored proof must verify");
+    }
+
+    function _accepts(IVerifier verifier, bytes memory proof, bytes32[] memory pub)
+        internal
+        view
+        returns (bool)
+    {
+        try verifier.verify(proof, pub) returns (bool ok) {
+            return ok;
+        } catch {
+            return false;
+        }
     }
 
     function test_spendVerifyGas() public {

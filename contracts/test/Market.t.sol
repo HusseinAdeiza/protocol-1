@@ -13,6 +13,7 @@ import {EchoVerifier} from "./mocks/EchoVerifier.sol";
 import {HollowCollection} from "./mocks/HollowCollection.sol";
 import {PlainCollection} from "./mocks/PlainCollection.sol";
 import {RejectingRecipient} from "./mocks/RejectingRecipient.sol";
+import {ReturnBomb} from "./mocks/ReturnBomb.sol";
 import {TestCollection} from "./mocks/TestCollection.sol";
 
 contract MarketTest is BacklitTest {
@@ -22,8 +23,6 @@ contract MarketTest is BacklitTest {
         depositAs(buyer, 5 ether, BUYER_PK, bytes32(uint256(1)));
         return pool.currentRoot();
     }
-
-    // ----------------------------------------------------------------- keys
 
     function test_keysAreReadableAndReplaceable() public {
         (bytes32 ownerPk, bytes32 viewingPk) = market.keysOf(seller);
@@ -43,8 +42,6 @@ contract MarketTest is BacklitTest {
         vm.expectRevert(BacklitMarket.ZeroAddress.selector);
         market.registerKeys(bytes32(0), VIEWING_PK);
     }
-
-    // -------------------------------------------------------------- listing
 
     function test_listEscrowsTheToken() public {
         bytes32 listingId = mintAndList(1);
@@ -122,13 +119,27 @@ contract MarketTest is BacklitTest {
         market.cancelListing(listingId);
     }
 
+    function test_cancelListingRefusesAReturnThatDidNotHappen() public {
+        HollowCollection hollow = new HollowCollection(creator, uint96(ROYALTY_BPS));
+        bytes32 listingId = _listWhileHonest(hollow);
+        hollow.setHollow(true);
+
+        vm.prank(seller);
+        vm.expectRevert(BacklitMarket.NotDelivered.selector);
+        market.cancelListing(listingId);
+        assertTrue(market.listingOf(listingId).active, "the listing stays open to try again");
+
+        hollow.setHollow(false);
+        vm.prank(seller);
+        market.cancelListing(listingId);
+        assertEq(IERC721(address(hollow)).ownerOf(1), seller);
+    }
+
     function test_royaltyOfReadsTheCollection() public view {
         (address receiver, uint256 basisPoints) = market.royaltyOf(address(collection), 1);
         assertEq(receiver, creator);
         assertEq(basisPoints, ROYALTY_BPS);
     }
-
-    // --------------------------------------------------------------- offers
 
     function test_offerStoresTheBuyersKeyAtTheTime() public {
         bytes32 listingId = mintAndList(1);
@@ -173,15 +184,57 @@ contract MarketTest is BacklitTest {
 
         vm.prank(stranger);
         vm.expectRevert(BacklitMarket.NotTheSeller.selector);
-        market.accept(offerId);
+        market.accept(offerId, PRICE_COMMITMENT, ROYALTY_BPS);
 
         vm.prank(seller);
-        market.accept(offerId);
+        market.accept(offerId, PRICE_COMMITMENT, ROYALTY_BPS);
         assertGt(market.offerOf(offerId).acceptedAt, 0);
+        assertEq(market.offerOf(offerId).acceptedRoyaltyBps, ROYALTY_BPS, "the rate is pinned");
 
         vm.prank(seller);
         market.unaccept(offerId);
         assertEq(market.offerOf(offerId).acceptedAt, 0);
+        assertEq(market.offerOf(offerId).acceptedRoyaltyBps, 0, "and cleared");
+    }
+
+    function test_aLaterAcceptancePinsTheRateAtThatMoment() public {
+        (, bytes32 offerId) = _accepted();
+        vm.prank(seller);
+        market.unaccept(offerId);
+
+        collection.setRoyalty(creator, 700);
+        vm.prank(seller);
+        market.accept(offerId, PRICE_COMMITMENT, 700);
+        assertEq(market.offerOf(offerId).acceptedRoyaltyBps, 700);
+    }
+
+    /// @dev The seller read an opening of one commitment. An index that pairs
+    /// it with another offer's id cannot get that offer accepted.
+    function test_acceptHoldsTheSellerToTheOfferTheyOpened() public {
+        bytes32 listingId = mintAndList(1);
+        openOffer(listingId, PRICE_COMMITMENT);
+        bytes32 lowball = openOffer(listingId, bytes32(uint256(556)));
+
+        vm.prank(seller);
+        vm.expectRevert(BacklitMarket.CommitmentMismatch.selector);
+        market.accept(lowball, PRICE_COMMITMENT, ROYALTY_BPS);
+        assertEq(market.offerOf(lowball).acceptedAt, 0);
+    }
+
+    /// @dev A raise that lands just before the acceptance makes it revert.
+    /// Agreeing to the new rate is then the seller's call.
+    function test_acceptRefusesARateAboveTheSellersCeiling() public {
+        bytes32 listingId = mintAndList(1);
+        bytes32 offerId = openOffer(listingId, PRICE_COMMITMENT);
+
+        collection.setRoyalty(creator, 1_000);
+        vm.prank(seller);
+        vm.expectRevert(BacklitMarket.RoyaltyOutOfRange.selector);
+        market.accept(offerId, PRICE_COMMITMENT, ROYALTY_BPS);
+
+        vm.prank(seller);
+        market.accept(offerId, PRICE_COMMITMENT, 1_000);
+        assertEq(market.offerOf(offerId).acceptedRoyaltyBps, 1_000);
     }
 
     function test_anExpiredOfferCanBeClosedByAnyone() public {
@@ -202,20 +255,18 @@ contract MarketTest is BacklitTest {
         bytes32 listingId = mintAndList(1);
         bytes32 offerId = openOffer(listingId, PRICE_COMMITMENT);
         vm.prank(seller);
-        market.accept(offerId);
+        market.accept(offerId, PRICE_COMMITMENT, ROYALTY_BPS);
 
         vm.warp(block.timestamp + market.ACCEPT_WINDOW() + 1);
         market.expireOffer(offerId);
         assertTrue(market.offerOf(offerId).cancelled);
     }
 
-    // ------------------------------------------------------------ settling
-
     function _accepted() internal returns (bytes32 listingId, bytes32 offerId) {
         listingId = mintAndList(1);
         offerId = openOffer(listingId, PRICE_COMMITMENT);
         vm.prank(seller);
-        market.accept(offerId);
+        market.accept(offerId, PRICE_COMMITMENT, ROYALTY_BPS);
     }
 
     function test_settleMovesTheNFTPaysTheFeeAndWritesAReceipt() public {
@@ -244,6 +295,9 @@ contract MarketTest is BacklitTest {
         assertEq(
             receipt.priceCommitment, PRICE_COMMITMENT, "the receipt carries the commitment, not the price"
         );
+        assertEq(receipt.creatorCommitment, settlePublic(root).creatorCommitment);
+        assertEq(receipt.timestamp, block.timestamp);
+        assertEq(market.recentReceipts(5)[0].offerId, offerId);
     }
 
     function test_settleNeedsAnAcceptedOffer() public {
@@ -307,6 +361,57 @@ contract MarketTest is BacklitTest {
         market.settle{value: FEE}(offerId, hex"00", p, emptyPayloads());
     }
 
+    /// @dev Raised after the seller accepted, the rate would take their share.
+    /// The sale stops instead, and goes through once the rate is back.
+    function test_aRateRaisedAfterAcceptanceStopsTheSale() public {
+        bytes32 root = _fund();
+        (, bytes32 offerId) = _accepted();
+        BacklitMarket.SettlePublic memory p = settlePublic(root);
+
+        collection.setRoyalty(creator, 10_000);
+        vm.expectRevert(BacklitMarket.RoyaltyRaised.selector);
+        market.settle{value: FEE}(offerId, hex"00", p, emptyPayloads());
+        assertEq(IERC721(address(collection)).ownerOf(1), address(market), "the token left escrow");
+        assertFalse(pool.isSpent(p.nullifiers[0]), "the buyer's notes were spent");
+
+        collection.setRoyalty(creator, uint96(ROYALTY_BPS));
+        market.settle{value: FEE}(offerId, hex"00", p, emptyPayloads());
+        assertEq(market.receiptOf(offerId).royaltyBps, ROYALTY_BPS);
+    }
+
+    function test_aRateLoweredAfterAcceptanceSettlesAtTheLowerRate() public {
+        bytes32 root = _fund();
+        (, bytes32 offerId) = _accepted();
+
+        collection.setRoyalty(creator, 250);
+        market.settle{value: FEE}(offerId, hex"00", settlePublic(root), emptyPayloads());
+        assertEq(market.receiptOf(offerId).royaltyBps, 250, "settled at the live rate");
+    }
+
+    function test_offerPayloadsAreCapped() public {
+        bytes32 listingId = mintAndList(1);
+        uint256 cap = market.MAX_PAYLOAD_BYTES();
+        uint64 expiresAt = uint64(block.timestamp + 1 days);
+
+        vm.startPrank(buyer);
+        market.offer(listingId, PRICE_COMMITMENT, buyer, new bytes(cap), expiresAt);
+        vm.expectRevert(BacklitMarket.PayloadTooLarge.selector);
+        market.offer(listingId, PRICE_COMMITMENT, buyer, new bytes(cap + 1), expiresAt);
+        vm.stopPrank();
+    }
+
+    /// @dev The pool caps every note payload, the three a settlement adds too.
+    function test_settlementNotePayloadsAreCapped() public {
+        bytes32 root = _fund();
+        (, bytes32 offerId) = _accepted();
+        BacklitMarket.SettlePublic memory p = settlePublic(root);
+        bytes[3] memory payloads = emptyPayloads();
+        payloads[1] = new bytes(pool.MAX_PAYLOAD_BYTES() + 1);
+
+        vm.expectRevert(BacklitPool.PayloadTooLarge.selector);
+        market.settle{value: FEE}(offerId, hex"00", p, payloads);
+    }
+
     function test_settleBuildsThePublicInputsTheCircuitExpects() public {
         BacklitMarket echoed = new BacklitMarket(
             pool, IVerifier(address(new EchoVerifier())), feeRecipient, FEE, guardian
@@ -330,7 +435,7 @@ contract MarketTest is BacklitTest {
             listingId, PRICE_COMMITMENT, buyer, hex"", uint64(block.timestamp + 1 days)
         );
         vm.prank(seller);
-        echoed.accept(offerId);
+        echoed.accept(offerId, PRICE_COMMITMENT, ROYALTY_BPS);
 
         bytes32 root = _fund();
         BacklitMarket.SettlePublic memory p = settlePublic(root);
@@ -407,6 +512,82 @@ contract MarketTest is BacklitTest {
         assertEq(market.feesOwed(), 0);
     }
 
+    /// @dev Copying a refusal this size back would cost settle more gas than
+    /// it has left, at any gas limit.
+    function test_aFeeRecipientThatRevertsWithAHugePayloadDoesNotBlockASale() public {
+        ReturnBomb bomb = new ReturnBomb(true);
+        vm.prank(guardian);
+        market.setFeeRecipient(address(bomb));
+
+        bytes32 root = _fund();
+        (, bytes32 offerId) = _accepted();
+
+        vm.expectEmit(true, false, false, true, address(market));
+        emit BacklitMarket.FeeDeferred(address(bomb), FEE);
+        market.settle{value: FEE, gas: 30_000_000}(offerId, hex"00", settlePublic(root), emptyPayloads());
+
+        assertEq(IERC721(address(collection)).ownerOf(1), buyer, "the sale went through");
+        assertEq(market.feesOwed(), FEE);
+        assertEq(address(market).balance, FEE);
+    }
+
+    function test_aFeeRecipientThatReturnsAHugePayloadIsPaidWithinTheGasCap() public {
+        ReturnBomb bomb = new ReturnBomb(false);
+        vm.prank(guardian);
+        market.setFeeRecipient(address(bomb));
+
+        bytes32 root = _fund();
+        (, bytes32 offerId) = _accepted();
+        market.settle{value: FEE, gas: 30_000_000}(offerId, hex"00", settlePublic(root), emptyPayloads());
+
+        assertEq(address(bomb).balance, FEE);
+        assertEq(market.feesOwed(), 0);
+        // A call that carries value adds a 2,300 stipend to the gas it passes.
+        assertLe(bomb.gasOnEntry(), market.FEE_GAS() + 2_300, "the recipient got more than FEE_GAS");
+    }
+
+    /// @dev `forwardFees` passes on all its gas, so the recipient can burn
+    /// nearly all of it; the send still finishes because nothing comes back.
+    function test_forwardFeesCopiesNothingTheRecipientReturns() public {
+        RejectingRecipient router = new RejectingRecipient();
+        vm.prank(guardian);
+        market.setFeeRecipient(address(router));
+        bytes32 root = _fund();
+        (, bytes32 offerId) = _accepted();
+        market.settle{value: FEE}(offerId, hex"00", settlePublic(root), emptyPayloads());
+
+        ReturnBomb bomb = new ReturnBomb(false);
+        vm.prank(guardian);
+        market.setFeeRecipient(address(bomb));
+        market.forwardFees{gas: 30_000_000}();
+
+        assertEq(address(bomb).balance, FEE);
+        assertEq(market.feesOwed(), 0);
+        assertGt(bomb.gasOnEntry(), market.FEE_GAS(), "forwardFees capped the recipient");
+    }
+
+    /// @dev The buyer's notes are spent before the transfer, so a collection
+    /// that turns hollow after listing would otherwise keep the payment.
+    function test_settleRefusesADeliveryThatDidNotHappen() public {
+        bytes32 root = _fund();
+        HollowCollection hollow = new HollowCollection(creator, uint96(ROYALTY_BPS));
+        bytes32 listingId = _listWhileHonest(hollow);
+        bytes32 offerId = openOffer(listingId, PRICE_COMMITMENT);
+        vm.prank(seller);
+        market.accept(offerId, PRICE_COMMITMENT, ROYALTY_BPS);
+        hollow.setHollow(true);
+        BacklitMarket.SettlePublic memory p = settlePublic(root);
+
+        vm.expectRevert(BacklitMarket.NotDelivered.selector);
+        market.settle{value: FEE}(offerId, hex"00", p, emptyPayloads());
+        assertFalse(pool.isSpent(p.nullifiers[0]), "the buyer's notes were spent");
+        assertTrue(market.listingOf(listingId).active);
+
+        hollow.setHollow(false);
+        market.settle{value: FEE}(offerId, hex"00", p, emptyPayloads());
+        assertEq(IERC721(address(hollow)).ownerOf(1), buyer);
+    }
+
     function test_aCollectionWithNoRoyaltyPaysTheThirdNoteToTheSeller() public {
         collection.setRoyalty(creator, 0);
         bytes32 root = _fund();
@@ -430,7 +611,7 @@ contract MarketTest is BacklitTest {
             listingId, PRICE_COMMITMENT, buyer, hex"", uint64(block.timestamp + 1 days)
         );
         vm.prank(seller);
-        echoed.accept(offerId);
+        echoed.accept(offerId, PRICE_COMMITMENT, 0);
 
         BacklitMarket.SettlePublic memory zeroRoyalty = settlePublic(root);
         try echoed.settle{value: FEE}(offerId, hex"00", zeroRoyalty, emptyPayloads()) {
@@ -441,8 +622,6 @@ contract MarketTest is BacklitTest {
             assertEq(publicInputs[11], SELLER_PK, "the empty creator note stays spendable");
         }
     }
-
-    // ------------------------------------------------------------- guardian
 
     function test_theGuardianSetsTheFeeWithinBounds() public {
         vm.prank(guardian);
@@ -474,6 +653,15 @@ contract MarketTest is BacklitTest {
         vm.prank(guardian);
         vm.expectRevert(BacklitMarket.NotTheSeller.selector);
         market.cancelListing(listingId);
+    }
+
+    function _listWhileHonest(HollowCollection hollow) internal returns (bytes32 listingId) {
+        hollow.setHollow(false);
+        vm.startPrank(seller);
+        hollow.mint(seller);
+        hollow.approve(address(market), 1);
+        listingId = market.list(address(hollow), 1);
+        vm.stopPrank();
     }
 
     function _stripSelector(bytes memory reason) private pure returns (bytes memory out) {

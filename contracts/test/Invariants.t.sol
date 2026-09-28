@@ -11,9 +11,8 @@ import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {TestnetWETH} from "./mocks/TestnetWETH.sol";
 
 /// @notice Drives the pool through random deposits, spends and guardian
-/// actions. The verifier accepts everything here on purpose: the point is that
-/// the pool stays solvent and honest about nullifiers even when the proof
-/// system is assumed to pass, so any loss would be the pool's own doing.
+/// actions. The verifier accepts everything on purpose: with the proof system
+/// out of the picture, any insolvency or replay is the pool's own doing.
 contract PoolHandler is Test {
     BacklitPool public pool;
     TestnetWETH public weth;
@@ -136,7 +135,6 @@ contract PoolInvariants is Test {
         targetContract(address(handler));
     }
 
-    /// @notice The pool never owes more than it holds.
     function invariant_thePoolHoldsWhatItOwes() public view {
         assertEq(
             weth.balanceOf(address(pool)),
@@ -145,7 +143,6 @@ contract PoolInvariants is Test {
         );
     }
 
-    /// @notice A published nullifier stays published.
     function invariant_everyPublishedNullifierIsMarkedSpent() public view {
         uint256 count = handler.usedNullifierCount();
         for (uint256 i = 0; i < count; i++) {
@@ -159,7 +156,6 @@ contract PoolInvariants is Test {
         assertTrue(pool.isKnownRoot(pool.currentRoot()));
     }
 
-    /// @notice No root the tree has had is ever forgotten.
     function invariant_everyRootStaysKnown() public view {
         uint256 count = handler.rootCount();
         for (uint256 i = 0; i < count; i++) {
@@ -167,7 +163,6 @@ contract PoolInvariants is Test {
         }
     }
 
-    /// @notice The cap never falls, whatever the guardian does.
     function invariant_theCapNeverFalls() public view {
         assertGe(pool.capWei(), 50 ether);
     }

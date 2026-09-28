@@ -16,6 +16,7 @@ import {
   toHex32,
   verifyNote,
   FR,
+  MAX_PAYLOAD_BYTES,
   type Hex,
 } from "../src/index.js";
 
@@ -59,9 +60,8 @@ describe("note payloads", () => {
   });
 
   it("skips foreign payloads cheaply", () => {
-    // The view tag is four bytes, so roughly one in 4.3 billion foreign
-    // payloads costs a full decryption attempt. None of these should even
-    // reach that point, and none of them should open.
+    // The view tag is four bytes, so only about one foreign payload in 4.3
+    // billion gets as far as a decryption attempt. None of these opens.
     let opened = 0;
     for (let i = 0; i < 200; i++) {
       const payload = sealNote(bob.viewingPk, {asset: WETH, amount: BigInt(i), salt: BigInt(i)});
@@ -159,6 +159,18 @@ describe("offer payloads", () => {
     const lowOrder = new Uint8Array(32);
     lowOrder[0] = 1;
     expect(openOwnOffer(bob.spendingKey, listingId, lowOrder, sealed.payload, sealed.priceCommitment)).toBeNull();
+  });
+});
+
+describe("payload sizes", () => {
+  // The pool and the market refuse anything longer than MAX_PAYLOAD_BYTES,
+  // and the app skips payloads that are not exactly these sizes.
+  it("stay at 118 bytes for a note and 114 for an offer, under the contracts' cap", () => {
+    const note = hexToBytes(sealNote(alice.viewingPk, {asset: WETH, amount: (1n << 96n) - 1n, salt: FR - 1n}));
+    const offer = hexToBytes(sealOfferFrom(bob.spendingKey, FR - 1n, alice.viewingPk, (1n << 96n) - 1n).payload);
+    expect(note).toHaveLength(118);
+    expect(offer).toHaveLength(114);
+    expect(Math.max(note.length, offer.length)).toBeLessThanOrEqual(MAX_PAYLOAD_BYTES);
   });
 });
 

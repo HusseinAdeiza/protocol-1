@@ -33,6 +33,18 @@ contract BacklitMarket {
     /// settlement out of reach.
     uint256 public constant MAX_FEE_WEI = 0.01 ether;
 
+    /// @notice Gas the fee recipient gets inside `settle`. A Safe takes about
+    /// 7,000 to receive ETH and a contract that wraps it into aeWETH about
+    /// 40,000, so this leaves room for either while capping what a recipient
+    /// can burn on every sale. A recipient that needs more has its fee held
+    /// for `forwardFees`, which passes on all the gas it is given.
+    uint256 public constant FEE_GAS = 100_000;
+
+    /// @notice Ceiling on an offer payload. The SDK's are 114 bytes. Sellers
+    /// and the indexer download every payload, so without a cap anyone could
+    /// make that arbitrarily expensive.
+    uint256 public constant MAX_PAYLOAD_BYTES = 160;
+
     BacklitPool public immutable pool;
     IVerifier public immutable settleVerifier;
     address public immutable guardian;
@@ -67,6 +79,10 @@ contract BacklitMarket {
         uint64 acceptedAt;
         bool settled;
         bool cancelled;
+        // The collection's rate when the seller accepted, zero until then.
+        // Settlement refuses a higher one. Appended, so the fields above keep
+        // their places in the `offers` getter, and it shares acceptedAt's slot.
+        uint16 acceptedRoyaltyBps;
     }
 
     struct Receipt {
@@ -81,7 +97,6 @@ contract BacklitMarket {
         uint256 feeWei;
         bytes32 priceCommitment;
         bytes32 creatorCommitment;
-        uint256 blockNumber;
         uint256 timestamp;
     }
 
@@ -100,7 +115,6 @@ contract BacklitMarket {
 
     uint256 private listingNonce;
     uint256 private offerNonce;
-    uint256 public receiptCount;
     bytes32[] private settledOffers;
 
     event KeysRegistered(address indexed wallet, bytes32 ownerPk, bytes32 viewingPk);
@@ -142,12 +156,14 @@ contract BacklitMarket {
     error AlreadySettled();
     error BadProof();
     error CollectionNotSupported();
+    error CommitmentMismatch();
     error FeeMismatch();
     error FeeTooHigh();
     error FeeTransferFailed();
     error ListingInactive();
     error NoKeys();
     error NotAccepted();
+    error NotDelivered();
     error NotEscrowed();
     error NotTheBuyer();
     error NotTheGuardian();
@@ -156,8 +172,10 @@ contract BacklitMarket {
     error OfferNotExpired();
     error OfferStillOpen();
     error OutOfRange();
+    error PayloadTooLarge();
     error Reentered();
     error RoyaltyOutOfRange();
+    error RoyaltyRaised();
     error ZeroAddress();
 
     uint256 private locked = 1;
@@ -199,7 +217,6 @@ contract BacklitMarket {
         emit FeeWeiSet(feeWei_);
     }
 
-
     /// @notice Publishes the caller's Backlit keys so others can address notes
     /// and encrypted offers to them. Re-registering replaces the old pair.
     function registerKeys(bytes32 ownerPk, bytes32 viewingPk) external {
@@ -216,7 +233,6 @@ contract BacklitMarket {
     function hasKeys(address wallet) public view returns (bool) {
         return _keys[wallet].ownerPk != bytes32(0);
     }
-
 
     /// @notice Escrows an NFT and opens it to encrypted offers.
     /// @dev The collection has to answer ERC-2981, and whoever it names as the
@@ -253,6 +269,8 @@ contract BacklitMarket {
 
         listing.active = false;
         IERC721(listing.collection).transferFrom(address(this), listing.seller, listing.tokenId);
+        // A listing closed on a token still in escrow could never return it.
+        if (IERC721(listing.collection).ownerOf(listing.tokenId) != listing.seller) revert NotDelivered();
         emit ListingCancelled(listingId);
     }
 
@@ -270,9 +288,11 @@ contract BacklitMarket {
         if (bps > 0 && receiver == address(0)) revert RoyaltyOutOfRange();
     }
 
-
     /// @notice Makes an offer at a price only the seller can read.
     /// @param priceCommitment Poseidon commitment to the price and a blinding factor.
+    /// @param nftRecipient Must still own the token when the transfer at
+    /// settlement returns, so a contract that passes it on from
+    /// `onERC721Received` makes the settlement revert.
     /// @param payloadToSeller The opening, encrypted to the seller's viewing key.
     function offer(
         bytes32 listingId,
@@ -285,6 +305,7 @@ contract BacklitMarket {
         if (!listing.active) revert ListingInactive();
         if (nftRecipient == address(0)) revert ZeroAddress();
         if (expiresAt <= block.timestamp) revert OutOfRange();
+        if (payloadToSeller.length > MAX_PAYLOAD_BYTES) revert PayloadTooLarge();
 
         (bytes32 buyerPk,) = keysOf(msg.sender);
         if (buyerPk == bytes32(0)) revert NoKeys();
@@ -299,7 +320,8 @@ contract BacklitMarket {
             expiresAt: expiresAt,
             acceptedAt: 0,
             settled: false,
-            cancelled: false
+            cancelled: false,
+            acceptedRoyaltyBps: 0
         });
 
         emit Offered(
@@ -310,20 +332,33 @@ contract BacklitMarket {
     function cancelOffer(bytes32 offerId) external {
         Offer storage o = offers[offerId];
         if (o.buyer != msg.sender) revert NotTheBuyer();
-        _close(offerId, o);
+        _close(o);
         emit OfferCancelled(offerId);
     }
 
     /// @notice The seller takes the offer. The buyer then has three days to settle.
-    function accept(bytes32 offerId) external {
+    /// @param priceCommitment The commitment whose opening the seller read. An
+    /// offer with any other is refused, so the seller accepts the price they
+    /// saw whatever a page or an indexer said the offer id was.
+    /// @param maxRoyaltyBps The highest rate the seller agrees to, normally the
+    /// one they were shown, so a rate raised just before this lands makes it
+    /// revert. The rate now is pinned to the offer and settlement refuses a
+    /// higher one.
+    function accept(bytes32 offerId, bytes32 priceCommitment, uint256 maxRoyaltyBps) external {
         Offer storage o = offers[offerId];
         Listing storage listing = listings[o.listingId];
         if (listing.seller != msg.sender) revert NotTheSeller();
         if (!listing.active) revert ListingInactive();
         if (o.settled || o.cancelled) revert OfferClosed();
         if (block.timestamp >= o.expiresAt) revert OfferClosed();
+        if (priceCommitment != o.priceCommitment) revert CommitmentMismatch();
+
+        (, uint256 bps) = royaltyOf(listing.collection, listing.tokenId);
+        if (bps > maxRoyaltyBps) revert RoyaltyOutOfRange();
 
         o.acceptedAt = uint64(block.timestamp);
+        // Fits: royaltyOf refuses anything above BPS_DENOM.
+        o.acceptedRoyaltyBps = uint16(bps);
         emit Accepted(offerId, uint64(block.timestamp) + uint64(ACCEPT_WINDOW));
     }
 
@@ -335,6 +370,7 @@ contract BacklitMarket {
         if (o.acceptedAt == 0) revert NotAccepted();
 
         o.acceptedAt = 0;
+        o.acceptedRoyaltyBps = 0;
         emit Unaccepted(offerId);
     }
 
@@ -345,19 +381,18 @@ contract BacklitMarket {
         bool pastExpiry = block.timestamp >= o.expiresAt;
         bool pastWindow = o.acceptedAt != 0 && block.timestamp >= uint256(o.acceptedAt) + ACCEPT_WINDOW;
         if (!pastExpiry && !pastWindow) revert OfferNotExpired();
-        _close(offerId, o);
+        _close(o);
         emit OfferExpired(offerId);
     }
 
-    function _close(bytes32, Offer storage o) private {
+    function _close(Offer storage o) private {
         if (o.settled) revert AlreadySettled();
         if (o.cancelled) revert OfferClosed();
         o.cancelled = true;
     }
 
-
-    /// @notice Settles an accepted offer. Anyone may submit it: the proof, not
-    /// the sender, is what authorises the spend.
+    /// @notice Settles an accepted offer. The proof authorises the spend, so
+    /// anyone may submit it.
     function settle(
         bytes32 offerId,
         bytes calldata proof,
@@ -375,6 +410,11 @@ contract BacklitMarket {
         if (msg.value != feeWei) revert FeeMismatch();
 
         (address royaltyReceiver, uint256 bps) = royaltyOf(listing.collection, listing.tokenId);
+        // A rate raised since the acceptance would take the difference out of
+        // the seller's share, up to all of it, so the sale stops instead. A
+        // lower rate only leaves the seller more, and the proof is built at
+        // the live rate either way.
+        if (bps > o.acceptedRoyaltyBps) revert RoyaltyRaised();
         (bytes32 sellerPk,) = keysOf(listing.seller);
         (bytes32 creatorPk,) = keysOf(royaltyReceiver);
         if (sellerPk == bytes32(0)) revert NoKeys();
@@ -398,15 +438,16 @@ contract BacklitMarket {
         _writeReceipt(offerId, o, listing, royaltyReceiver, bps, p.creatorCommitment);
 
         IERC721(listing.collection).safeTransferFrom(address(this), o.nftRecipient, listing.tokenId);
+        // The buyer's notes are spent by now, so a collection that reports a
+        // transfer it did not make would otherwise keep the payment.
+        if (IERC721(listing.collection).ownerOf(listing.tokenId) != o.nftRecipient) revert NotDelivered();
 
         // A fee recipient that stops accepting ETH must not stop sales, so a
-        // failed send is held and forwarded later by anyone.
-        if (msg.value > 0) {
-            (bool paid,) = feeRecipient.call{value: msg.value}("");
-            if (!paid) {
-                feesOwed += msg.value;
-                emit FeeDeferred(feeRecipient, msg.value);
-            }
+        // failed send is held and forwarded later by anyone. That includes a
+        // send the submitter starved of gas: it only delays the fee.
+        if (msg.value > 0 && !_send(feeRecipient, msg.value, FEE_GAS)) {
+            feesOwed += msg.value;
+            emit FeeDeferred(feeRecipient, msg.value);
         }
 
         emit Settled(offerId, o.listingId, o.nftRecipient, royaltyReceiver, bps, msg.value);
@@ -469,15 +510,13 @@ contract BacklitMarket {
             feeWei: msg.value,
             priceCommitment: o.priceCommitment,
             creatorCommitment: creatorCommitment,
-            blockNumber: block.number,
             timestamp: block.timestamp
         });
         settledOffers.push(offerId);
-        receiptCount++;
     }
 
-    /// @notice The whole receipt in one read, which is what an indexer and the
-    /// receipt page both want.
+    /// @notice The whole receipt in one read, for the indexer and the receipt
+    /// page.
     function receiptOf(bytes32 offerId) external view returns (Receipt memory) {
         return receipts[offerId];
     }
@@ -490,6 +529,10 @@ contract BacklitMarket {
         return listings[listingId];
     }
 
+    function receiptCount() external view returns (uint256) {
+        return settledOffers.length;
+    }
+
     function recentReceipts(uint256 limit) external view returns (Receipt[] memory out) {
         uint256 total = settledOffers.length;
         uint256 n = limit > total ? total : limit;
@@ -499,16 +542,23 @@ contract BacklitMarket {
         }
     }
 
-
     /// @notice Sends deferred fees to the current fee recipient. Anyone may
     /// call it; the money can only go to `feeRecipient`.
     function forwardFees() external nonReentrant {
         uint256 amount = feesOwed;
         if (amount == 0) return;
         feesOwed = 0;
-        (bool paid,) = feeRecipient.call{value: amount}("");
-        if (!paid) revert FeeTransferFailed();
+        if (!_send(feeRecipient, amount, gasleft())) revert FeeTransferFailed();
         emit FeesForwarded(feeRecipient, amount);
+    }
+
+    /// @dev Solidity's `.call` copies whatever the callee returns, and a
+    /// callee can return more than the 1/64 of gas the caller kept can pay
+    /// to copy. Nothing here reads the return data, so none is copied.
+    function _send(address to, uint256 amount, uint256 gasLimit) private returns (bool sent) {
+        assembly ("memory-safe") {
+            sent := call(gasLimit, to, amount, 0, 0, 0, 0)
+        }
     }
 
     function setFeeRecipient(address feeRecipient_) external onlyGuardian {

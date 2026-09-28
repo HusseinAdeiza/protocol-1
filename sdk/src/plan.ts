@@ -65,7 +65,6 @@ export function selectNotes(notes: OwnedNote[], needed: bigint): OwnedNote[] | n
   return null;
 }
 
-/** Sum of everything the wallet can spend right now. */
 export function balanceOf(notes: OwnedNote[]): bigint {
   return notes.reduce((total, note) => total + note.amount, 0n);
 }

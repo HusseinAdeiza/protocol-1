@@ -160,7 +160,7 @@ mod tests {
     }
 
     /// Feeding the same note in twice is the cheapest way to try to double
-    /// an amount, so it gets its own fixture rather than a reused one.
+    /// an amount, so it gets its own fixture.
     #[test(should_fail_with = "the same note twice")]
     fn spending_one_note_twice_fails() {
         let owner = owner_pk(KEY);

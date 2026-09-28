@@ -4,9 +4,9 @@ The contracts, circuits and client cryptography behind [backlit.ink](https://bac
 an NFT market on Robinhood Chain where the sale price stays private and the
 creator's royalty is paid in the same transaction.
 
-The contracts, circuits and SDK are all here. The contracts cannot be
-upgraded, the verifiers are generated from these circuits, and the SDK is the
-code the app uses to derive keys and encrypt notes in your browser.
+The contracts cannot be upgraded, the verifiers are generated from these
+circuits, and the SDK is the code the app runs in your browser to derive keys
+and encrypt notes.
 
 ## What is private
 
@@ -37,12 +37,14 @@ royalty and the buyer's change. The proof shows they add up to the committed
 price and that the royalty is exactly the collection's ERC-2981 rate, rounded
 up.
 
-Keys come from one wallet signature and never leave the device. Note payloads
+Keys come from one wallet signature and stay on the device; only a
+passphrase-encrypted backup of the seed can be exported. Note payloads
 are encrypted to the owner's viewing key with a four-byte view tag, so a wallet
 can skip notes that are not its own cheaply.
 
-Proofs are UltraHonk over BN254, with no trusted setup. Verifying one on chain
-costs about 2.5M gas.
+Proofs are UltraHonk over BN254. There is no per-circuit trusted setup; the
+scheme uses a universal setup (Aztec's Ignition ceremony). Verifying one on
+chain costs about 2.5M gas.
 
 ## Building and testing
 
@@ -69,9 +71,9 @@ Solidity verifiers. Run it after any circuit change and commit the result.
 
 ## Admin controls
 
-The contracts have no proxy and no upgrade path. A guardian can raise the
-deposit cap and pause new deposits. Nothing in these contracts can pause a
-withdrawal. Balances are held in the chain's WETH contract, which has its own
+The contracts have no proxy and no upgrade path. A guardian, a Safe, can raise
+the deposit cap, pause new deposits, and set the flat fee (capped at 0.01 ETH)
+and where it goes. Nothing in these contracts can pause a withdrawal. Balances are held in the chain's WETH contract, which has its own
 upgrade administrator.
 
 ## Security

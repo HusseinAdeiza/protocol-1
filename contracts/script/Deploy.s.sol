@@ -13,6 +13,7 @@ import {SettleVerifier} from "../src/verifiers/SettleVerifier.sol";
 import {SpendVerifier} from "../src/verifiers/SpendVerifier.sol";
 import {TestCollection} from "../test/mocks/TestCollection.sol";
 import {TestnetWETH} from "../test/mocks/TestnetWETH.sol";
+import {SafeCheck} from "./SafeCheck.sol";
 
 /// @notice Deploys Backlit and writes `deployments/<chainId>.json`.
 ///
@@ -23,16 +24,16 @@ import {TestnetWETH} from "../test/mocks/TestnetWETH.sol";
 ///   WETH_ADDRESS      an existing WETH; a TestnetWETH is deployed when unset
 ///   GUARDIAN          the Safe that may raise the cap and pause deposits
 ///   FEE_RECIPIENT     where the flat settlement fee goes
-///   INITIAL_CAP       deposit cap in wei
+///   INITIAL_CAP       deposit cap in wei; 20 ETH when unset, except on 4663
 ///   FEE_WEI           flat fee per settled sale
 ///   FIXTURES          when true, also deploys a test collection
 ///   FIXTURE_BASE_URI  metadata base for that collection
 ///
-/// On Robinhood Chain mainnet (4663) the contracts are immutable from the
-/// first block, so the script refuses any configuration it would regret:
-/// WETH must be the canonical one, the guardian must be a contract distinct
-/// from the deployer, the fee recipient must be explicit and not the deployer,
-/// and no fixtures.
+/// The contracts are immutable, so on Robinhood Chain mainnet (4663) the
+/// script refuses a configuration that would be a permanent mistake: WETH must
+/// be the canonical one, the guardian a Safe with owners and a threshold, the
+/// cap and the fee recipient set explicitly, neither the guardian nor the fee
+/// recipient the deployer, and fixtures off.
 contract Deploy is Script {
     using stdJson for string;
 
@@ -80,13 +81,15 @@ contract Deploy is Script {
 
         if (block.chainid == MAINNET) {
             require(config.weth == MAINNET_WETH, "mainnet: WETH_ADDRESS must be the canonical WETH");
-            // The defaults above fall back to the deployer, which is exactly
-            // what mainnet must not get, so both have to be set explicitly.
+            // The defaults are for local chains: the guardian and the fee
+            // recipient fall back to the deployer, and the cap, which bounds
+            // what a circuit bug could take, to 20 ETH.
             require(vm.envExists("GUARDIAN"), "mainnet: GUARDIAN must be set");
             require(vm.envExists("FEE_RECIPIENT"), "mainnet: FEE_RECIPIENT must be set");
+            require(vm.envExists("INITIAL_CAP"), "mainnet: INITIAL_CAP must be set");
             require(config.guardian != deployer, "mainnet: the guardian cannot be the deployer");
             require(config.feeRecipient != deployer, "mainnet: the fee recipient cannot be the deployer");
-            require(config.guardian.code.length > 0, "mainnet: the guardian must be a deployed Safe");
+            require(SafeCheck.isSafe(config.guardian, config.deployer), "mainnet: the guardian must be a Safe the deployer does not own");
             require(!config.fixtures, "mainnet: FIXTURES must be off");
         }
     }
@@ -120,7 +123,7 @@ contract Deploy is Script {
     }
 
     function _fixtures(address deployer) private returns (address) {
-        TestCollection sample = new TestCollection("Backlit Panes", "PANE", deployer, 500);
+        TestCollection sample = new TestCollection("Test Panes", "TPANE", deployer, 500);
         string memory baseUri = vm.envOr("FIXTURE_BASE_URI", string(""));
         if (bytes(baseUri).length > 0) sample.setBaseURI(baseUri);
         for (uint256 i = 0; i < 12; i++) {

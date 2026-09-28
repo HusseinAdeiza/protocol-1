@@ -14,8 +14,6 @@ contract PoolTest is BacklitTest {
     event NoteCreated(uint256 indexed leafIndex, bytes32 commitment, bytes payload);
     event Withdrawn(address indexed to, uint256 amount);
 
-    // ------------------------------------------------------------- deposits
-
     function test_depositETHCreatesTheRightCommitment() public {
         bytes32 salt = bytes32(uint256(7));
         bytes32 expected = commitmentOf(1 ether, BUYER_PK, salt);
@@ -132,8 +130,6 @@ contract PoolTest is BacklitTest {
         assertEq(pool.leafCount(), 1);
     }
 
-    // ----------------------------------------------------------------- roots
-
     /// @dev A proof built on a busy pool must not expire before it lands, so
     /// no root is ever forgotten.
     function test_aRootOlderThanSixtyFourInsertsIsStillAccepted() public {
@@ -159,12 +155,10 @@ contract PoolTest is BacklitTest {
         assertTrue(pool.isSpent(bytes32(uint256(1001))));
     }
 
-    function test_anUnknownRootIsRejected() public {
+    function test_anUnknownRootIsRejected() public view {
         assertFalse(pool.isKnownRoot(bytes32(uint256(12345))));
         assertFalse(pool.isKnownRoot(bytes32(0)));
     }
-
-    // ---------------------------------------------------------------- spends
 
     function _spendPublic(uint256 withdrawAmount, address recipient, bool unwrap)
         internal
@@ -269,6 +263,50 @@ contract PoolTest is BacklitTest {
         pool.spend(hex"00", p, [bytes(hex"aa"), bytes(hex"bb")]);
     }
 
+    /// @dev As ETH, WETH wraps the payout straight back to the pool; as WETH,
+    /// it stays in the token contract for good.
+    function test_aWithdrawalToWethIsRefused() public {
+        depositAs(buyer, 5 ether, BUYER_PK, bytes32(uint256(1)));
+        BacklitPool.SpendPublic memory p = _spendPublic(1 ether, address(weth), true);
+
+        vm.expectRevert(BacklitPool.BadRecipient.selector);
+        pool.spend(hex"00", p, [bytes(hex"aa"), bytes(hex"bb")]);
+
+        p.unwrap = false;
+        vm.expectRevert(BacklitPool.BadRecipient.selector);
+        pool.spend(hex"00", p, [bytes(hex"aa"), bytes(hex"bb")]);
+    }
+
+    /// @dev The market takes no ETH and has no way to move WETH out.
+    function test_aWithdrawalToTheMarketIsRefused() public {
+        depositAs(buyer, 5 ether, BUYER_PK, bytes32(uint256(1)));
+        BacklitPool.SpendPublic memory p = _spendPublic(1 ether, address(market), false);
+
+        vm.expectRevert(BacklitPool.BadRecipient.selector);
+        pool.spend(hex"00", p, [bytes(hex"aa"), bytes(hex"bb")]);
+    }
+
+    /// @dev Every wallet downloads every note payload to find its own.
+    function test_notePayloadsAreCapped() public {
+        uint256 cap = pool.MAX_PAYLOAD_BYTES();
+
+        vm.startPrank(buyer);
+        pool.depositETH{value: 1 ether}(BUYER_PK, bytes32(uint256(1)), new bytes(cap));
+        vm.expectRevert(BacklitPool.PayloadTooLarge.selector);
+        pool.depositETH{value: 1 ether}(BUYER_PK, bytes32(uint256(2)), new bytes(cap + 1));
+
+        weth.deposit{value: 1 ether}();
+        weth.approve(address(pool), 1 ether);
+        vm.expectRevert(BacklitPool.PayloadTooLarge.selector);
+        pool.depositWETH(1 ether, BUYER_PK, bytes32(uint256(3)), new bytes(cap + 1));
+        vm.stopPrank();
+
+        BacklitPool.SpendPublic memory p = _spendPublic(0, address(0), false);
+        vm.expectRevert(BacklitPool.PayloadTooLarge.selector);
+        pool.spend(hex"00", p, [new bytes(cap), new bytes(cap + 1)]);
+        pool.spend(hex"00", p, [new bytes(cap), new bytes(cap)]);
+    }
+
     function test_withdrawalsSurviveADepositPause() public {
         depositAs(buyer, 5 ether, BUYER_PK, bytes32(uint256(1)));
 
@@ -328,8 +366,6 @@ contract PoolTest is BacklitTest {
         assertTrue(pool.spendBinding(buyer, false, [bytes(hex"aa"), bytes(hex"bc")]) != honest, "payload");
         assertLt(uint256(honest), SNARK_SCALAR_FIELD);
     }
-
-    // ----------------------------------------------------------- permissions
 
     function test_onlyTheMarketAppliesASettledSale() public {
         depositAs(buyer, 1 ether, BUYER_PK, bytes32(uint256(1)));

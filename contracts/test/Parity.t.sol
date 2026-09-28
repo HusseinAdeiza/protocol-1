@@ -86,9 +86,8 @@ contract ParityTest is Test {
         );
     }
 
-    /// @dev The tree is the piece most likely to drift, because the JavaScript
-    /// and Solidity implementations are separate code. Every intermediate root
-    /// is checked, not just the last one.
+    /// @dev The JavaScript and Solidity trees are separate implementations, so
+    /// every intermediate root is checked.
     function test_treeRootsMatchAfterEveryInsert() public {
         uint256[] memory leaves = vectors.readUintArray(".tree.leaves");
         uint256[] memory roots = vectors.readUintArray(".tree.roots");

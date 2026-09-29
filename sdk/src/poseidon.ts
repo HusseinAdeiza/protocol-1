@@ -1,4 +1,6 @@
-import {poseidon2 as p2, poseidon4 as p4} from "poseidon-lite";
+// The package index pulls in the constants for all sixteen widths. Only two are used.
+import {poseidon2 as p2} from "poseidon-lite/poseidon2";
+import {poseidon4 as p4} from "poseidon-lite/poseidon4";
 
 /**
  * The circomlib-compatible BN254 Poseidon, the one hash the whole system

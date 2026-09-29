@@ -1,3 +1,17 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/lockup-on-dark.png">
+    <img src="docs/assets/lockup-on-light.png" width="420" alt="backlit.ink">
+  </picture>
+</p>
+
+<p align="center">
+  <a href="https://backlit.ink">Website</a> ·
+  <a href="https://backlit.ink/docs">Docs</a> ·
+  <a href="https://backlit.ink/docs/contracts">Deployments</a> ·
+  <a href="https://x.com/backlitink">X</a>
+</p>
+
 # Backlit protocol
 
 The contracts, circuits and client cryptography behind [backlit.ink](https://backlit.ink),
@@ -11,8 +25,8 @@ and encrypt notes.
 ## What is private
 
 A sale on Backlit publishes the listing, the NFT's new owner, the royalty rate
-and the fact that it was paid in full. It does not publish the price, and the
-notes that paid are not linked to the wallet that deposited them.
+and the fact that it was paid in full. It does not publish the price or the
+amounts the seller and the creator receive.
 [`docs/threat-model.md`](docs/threat-model.md) sets out what each guarantee
 rests on and what it does not cover.
 

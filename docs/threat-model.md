@@ -5,9 +5,11 @@ Written for a reviewer.
 
 ## What the system claims
 
-Backlit hides the sale price and the funding trail behind a payment. The
-listing, the settlement and the NFT's new owner are public. The royalty rate
-and the fact it was paid are public. Nothing else is claimed.
+Backlit hides the sale price and the amounts that move inside the pool: what
+the seller and the creator receive and what the buyer keeps as change. The
+listing, the settlement and the NFT's new owner are public, and so are the
+keys whose notes pay and are paid in a settlement. The royalty rate and the
+fact it was paid are public. Nothing else is claimed.
 
 ## Assets
 
@@ -84,8 +86,9 @@ payload says. Wallets check every decrypted note against its leaf with
 `verifyNote` and drop any that do not match, and drop any offer whose opening
 does not match the commitment on chain.
 
-Residual: the creator never sees the price, so a buyer can make the royalty
-note unrecoverable by sealing garbage to the creator. The buyer still pays the
+Residual: the creator learns the royalty note's salt only from its payload, so
+a buyer can make the royalty note unrecoverable by sealing garbage to the
+creator. The buyer still pays the
 royalty; nobody gains, the creator loses that sale's royalty. Fixing it needs
 the creator's salt to be derivable by the creator, which is future work.
 
@@ -110,7 +113,7 @@ nullifier.
 
 ### A hostile or broken fee recipient
 
-The flat fee goes to a router the operator runs. If that router reverted, every
+The flat fee goes to the fee recipient the guardian sets. If that recipient reverted, every
 settlement would revert with it. A contract recipient could also make
 settlement too expensive to finish, by burning the gas it is handed or by
 returning more data than the market can afford to copy back.
@@ -173,8 +176,10 @@ A collection controls `royaltyInfo`, `transferFrom` and `tokenURI`.
 Against it: escrow and release are guarded against reentrancy, and the market
 holds no value beyond the token itself and any deferred fees. `list` checks the
 market owns the token after `transferFrom`, and the market does not accept
-`safeTransferFrom` from outside `list`, so no token can arrive without a
-listing that can return it. The same check runs on the way out: `settle`
+`safeTransferFrom` from outside `list`, so no token sent that way can arrive
+without a listing that can return it. A plain `transferFrom` straight to the
+market cannot be refused, and nothing can return a token sent like that; the
+app never sends one. The same check runs on the way out: `settle`
 confirms the offer's recipient owns the token and `cancelListing` that the
 seller does, or they revert with `NotDelivered`. A collection that reports a
 transfer it did not make cannot keep a buyer's notes or close a listing on a
@@ -264,6 +269,10 @@ wallet's keys, before the other side spends them.
 - **A small anonymity set.** Early on, few notes exist. Timing and amounts can
   narrow a guess. The app steers deposits and withdrawals to round numbers, and
   the docs say this plainly.
+- **Linking a purchase to the buyer's deposits.** A deposit names the key it
+  funds, and a settlement names the keys that pay and are paid. An observer can
+  tell whose notes paid for a purchase, though not which of them or how much. A
+  key funded by a single deposit makes that deposit the funding.
 - **Anyone watching the buyer's screen.** The price is on the buyer's and the
   seller's devices in plain text, because they both need to read it.
 - **The NFT's new owner staying private.** It is public, deliberately.

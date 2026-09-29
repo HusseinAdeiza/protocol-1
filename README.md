@@ -62,8 +62,8 @@ chain costs about 2.5M gas.
 
 ## Building and testing
 
-Needs Node 22 or later, pnpm, Foundry, and `nargo` and `bb` at the versions in
-[`circuits/versions.json`](circuits/versions.json).
+Needs Node 22 or later, pnpm, Foundry 1.8.1, and `nargo` and `bb` at the versions
+in [`circuits/versions.json`](circuits/versions.json).
 
 ```
 git clone --recursive https://github.com/backlit-ink/protocol
